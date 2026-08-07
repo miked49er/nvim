@@ -1,10 +1,4 @@
-vim.g.mapleader = ' '
-
 require('config.lazy')
-
-vim.opt.shiftwidth = 2
-vim.opt.number = true
-vim.opt.relativenumber = true
 
 vim.keymap.set('n', '<space><space>x', '<cmd>source %<CR>')
 vim.keymap.set('n', '<leader>x', ':.lua<CR>')
