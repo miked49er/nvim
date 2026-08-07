@@ -1,5 +1,11 @@
 require('config.lazy')
 
+local set = vim.opt_local
+
+set.shiftwidth = 2
+set.number = true
+set.relativenumber = true
+
 vim.keymap.set('n', '<space><space>x', '<cmd>source %<CR>')
 vim.keymap.set('n', '<leader>x', ':.lua<CR>')
 vim.keymap.set('v', '<leader>x', ':lua<CR>')
