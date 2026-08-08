@@ -6,9 +6,16 @@ set.shiftwidth = 2
 set.number = true
 set.relativenumber = true
 
-vim.keymap.set("n", "<space><space>x", ":source %<CR>")
+vim.diagnostic.config({
+  virtual_text = true,
+})
+
+vim.keymap.set("n", "<space><space>x", "<cmd>source %<CR>")
 vim.keymap.set("n", "<leader>x", ":.lua<CR>")
 vim.keymap.set("v", "<leader>x", ":lua<CR>")
+
+vim.keymap.set("n", "<M-j>", "<cmd>cnext<CR>")
+vim.keymap.set("n", "<M-k>", "<cmd>cprev<CR>")
 
 -- Highlight when yanking (copying) text
 --   Try it with `yap` in normal mode
