@@ -1,10 +1,10 @@
 require("config.lazy")
+require("config.terminal.term")
 
-local set = vim.opt_local
-
-set.shiftwidth = 2
-set.number = true
-set.relativenumber = true
+vim.opt.shiftwidth = 2
+vim.opt.clipboard = "unnamedplus"
+vim.opt.number = true
+vim.opt.relativenumber = true
 
 vim.diagnostic.config({
   virtual_text = true,
@@ -17,9 +17,6 @@ vim.keymap.set("v", "<leader>x", ":lua<CR>")
 vim.keymap.set("n", "<M-j>", "<cmd>cnext<CR>")
 vim.keymap.set("n", "<M-k>", "<cmd>cprev<CR>")
 
--- Highlight when yanking (copying) text
---   Try it with `yap` in normal mode
---   See `:help vim.highlight.on_yank()`
 vim.api.nvim_create_autocmd("TextYankPost", {
   desc = "Highlight when yanking (copying) text",
   group = vim.api.nvim_create_augroup("kickstart-highlight-yank", { clear = true }),
