@@ -15,7 +15,7 @@ vim.cmd([[
   amenu     PopUp.URL         gx
 ]])
 
-local group = vim.api.nvim_create_audroup("nvim_popupmenu", { clear = true })
+local group = vim.api.nvim_create_augroup("nvim_popupmenu", { clear = true })
 vim.api.nvim_create_autocmd("MenuPopup", {
   pattern = "*",
   group = group,
@@ -39,4 +39,5 @@ vim.api.nvim_create_autocmd("MenuPopup", {
     end
   end,
 })
--- TODO: Add autocommand
+
+return {}
