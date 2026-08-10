@@ -47,14 +47,6 @@ local function toggle_floating_terminal(opts)
   vim.api.nvim_win_hide(state.floating.win)
 end
 
-return {
-  {
-    "floaterminal",
-    dir = vim.fn.stdpath("config"),
-    config = function()
-      vim.api.nvim_create_user_command("Floaterminal", toggle_floating_terminal, { desc = "Open a floating terminal" })
+vim.api.nvim_create_user_command("Floaterminal", toggle_floating_terminal, { desc = "Open a floating terminal" })
 
-      vim.keymap.set({ "n", "t" }, "<leader>tt", toggle_floating_terminal, { desc = "Toggle floating terminal" })
-    end,
-  },
-}
+vim.keymap.set({ "n", "t" }, "<leader>tt", toggle_floating_terminal, { desc = "Toggle floating terminal" })
