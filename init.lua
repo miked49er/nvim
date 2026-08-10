@@ -26,3 +26,10 @@ vim.api.nvim_create_autocmd("TextYankPost", {
     vim.highlight.on_yank()
   end,
 })
+
+vim.api.nvim_create_autocmd("BufWritePre", {
+  pattern = "*",
+  callback = function(args)
+    vim.fn.mkdir(vim.fn.fnamemodify(vim.api.nvim_buf_get_name(args.buf), ":h"), "p")
+  end,
+})
