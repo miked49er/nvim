@@ -27,11 +27,11 @@ end
 local function close_import_fold(bufnr)
   import_fold_range(bufnr, function(range)
     local line = range.startLine + 1
-    if vim.fn.foldclosed(line) == -1 then
-      vim.api.nvim_win_call(vim.fn.bufwinid(bufnr), function()
+    vim.api.nvim_win_call(vim.fn.bufwinid(bufnr), function()
+      if vim.fn.foldclosed(line) == -1 then
         vim.cmd(string.format("%d,%dfoldclose!", line, range.endLine + 1))
-      end)
-    end
+      end
+    end)
   end)
 end
 
@@ -127,6 +127,18 @@ return {
     },
     config = function()
       local capabilities = require("blink.cmp").get_lsp_capabilities()
+
+      -- Suppress TS6133 specifically for unused `import React`, since the
+      -- new JSX transform no longer requires it in scope.
+      local publish_diagnostics = vim.lsp.handlers["textDocument/publishDiagnostics"]
+      vim.lsp.handlers["textDocument/publishDiagnostics"] = function(err, result, ctx, config)
+        if result and result.diagnostics then
+          result.diagnostics = vim.tbl_filter(function(d)
+            return not (d.code == 6133 and d.message == "'React' is declared but its value is never read.")
+          end, result.diagnostics)
+        end
+        publish_diagnostics(err, result, ctx, config)
+      end
 
       vim.lsp.config("lua_ls", {
         settings = {
