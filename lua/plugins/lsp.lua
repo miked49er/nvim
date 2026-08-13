@@ -208,6 +208,7 @@ return {
             local win = vim.fn.bufwinid(ev.buf)
             vim.wo[win][0].foldmethod = "expr"
             vim.wo[win][0].foldexpr = "v:lua.vim.lsp.foldexpr()"
+            vim.wo[win][0].foldlevel = 99
 
             if vim.g.autofold_imports and not vim.b[ev.buf].did_autofold_imports then
               vim.b[ev.buf].did_autofold_imports = true
