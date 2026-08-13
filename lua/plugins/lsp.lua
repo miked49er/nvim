@@ -216,14 +216,14 @@ return {
             vim.lsp.inlay_hint.enable(true, { bufnr = ev.buf })
           end
 
-          if client:supports_method("textDocument/foldingRange") then
+          if client:supports_method("textDocument/foldingRange") and not vim.b[ev.buf].did_setup_lsp_folding then
+            vim.b[ev.buf].did_setup_lsp_folding = true
             local win = vim.fn.bufwinid(ev.buf)
             vim.wo[win][0].foldmethod = "expr"
             vim.wo[win][0].foldexpr = "v:lua.vim.lsp.foldexpr()"
             vim.wo[win][0].foldlevel = 99
 
-            if vim.g.autofold_imports and not vim.b[ev.buf].did_autofold_imports then
-              vim.b[ev.buf].did_autofold_imports = true
+            if vim.g.autofold_imports then
               vim.defer_fn(function()
                 close_import_fold(ev.buf)
               end, 100)
