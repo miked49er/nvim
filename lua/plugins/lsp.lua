@@ -1,5 +1,49 @@
 local is_mac = vim.uv.os_uname().sysname == "Darwin"
 
+-- Auto-fold the imports block on open. Set to false to leave imports
+-- expanded and only fold them via the <leader>zi toggle.
+vim.g.autofold_imports = true
+
+local function import_fold_range(bufnr, callback)
+  local clients = vim.lsp.get_clients({ bufnr = bufnr, method = "textDocument/foldingRange" })
+  if #clients == 0 then
+    return
+  end
+  clients[1]:request("textDocument/foldingRange", {
+    textDocument = vim.lsp.util.make_text_document_params(bufnr),
+  }, function(err, result)
+    if err or not result then
+      return
+    end
+    for _, range in ipairs(result) do
+      if range.kind == "imports" then
+        callback(range)
+        return
+      end
+    end
+  end, bufnr)
+end
+
+local function close_import_fold(bufnr)
+  import_fold_range(bufnr, function(range)
+    local line = range.startLine + 1
+    if vim.fn.foldclosed(line) == -1 then
+      vim.api.nvim_win_call(vim.fn.bufwinid(bufnr), function()
+        vim.cmd(string.format("%d,%dfold", line, range.endLine + 1))
+      end)
+    end
+  end)
+end
+
+local function toggle_import_fold(bufnr)
+  import_fold_range(bufnr, function(range)
+    vim.api.nvim_win_call(vim.fn.bufwinid(bufnr), function()
+      vim.api.nvim_win_set_cursor(0, { range.startLine + 1, 0 })
+      vim.cmd("normal! za")
+    end)
+  end)
+end
+
 local ensure_installed = {
   "autohotkey_lsp",
   "awk_ls",
@@ -158,6 +202,19 @@ return {
             vim.lsp.inlay_hint.enable(true, { bufnr = ev.buf })
           end
 
+          if client:supports_method("textDocument/foldingRange") then
+            local win = vim.fn.bufwinid(ev.buf)
+            vim.wo[win][0].foldmethod = "expr"
+            vim.wo[win][0].foldexpr = "v:lua.vim.lsp.foldexpr()"
+
+            if vim.g.autofold_imports and not vim.b[ev.buf].did_autofold_imports then
+              vim.b[ev.buf].did_autofold_imports = true
+              vim.defer_fn(function()
+                close_import_fold(ev.buf)
+              end, 100)
+            end
+          end
+
           -- Auto-format ("lint") on save.
           -- Usually not needed if server supports "textDocument/willSaveWaitUntil".
           -- vtsls is excluded so it never fights eslint over JS/TS formatting.
@@ -178,6 +235,9 @@ return {
       })
 
       vim.keymap.set({ "n" }, "<M-CR>", vim.lsp.buf.code_action, { desc = "LSP Code Action" })
+      vim.keymap.set({ "n" }, "<leader>zi", function()
+        toggle_import_fold(vim.api.nvim_get_current_buf())
+      end, { desc = "Toggle imports fold" })
     end,
   },
 }
