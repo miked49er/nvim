@@ -149,31 +149,27 @@ return {
       -- TypeScript/TSX (React Native, Expo). Formatting is left to eslint
       -- below, not vtsls, since project eslint configs are the source of
       -- truth here rather than Prettier.
+      local ts_js_language_settings = {
+        updateImportsOnFileMove = { enabled = "always" },
+        format = {
+          indentSize = 2,
+          tabSize = 2,
+          convertTabsToSpaces = true,
+        },
+        inlayHints = {
+          parameterNames = { enabled = "all" },
+          parameterTypes = { enabled = true },
+          variableTypes = { enabled = true },
+          propertyDeclarationTypes = { enabled = true },
+          functionLikeReturnTypes = { enabled = true },
+          enumMemberValues = { enabled = true },
+        },
+      }
       vim.lsp.config("vtsls", {
         capabilities = capabilities,
         settings = {
-          typescript = {
-            updateImportsOnFileMove = { enabled = "always" },
-            inlayHints = {
-              parameterNames = { enabled = "all" },
-              parameterTypes = { enabled = true },
-              variableTypes = { enabled = true },
-              propertyDeclarationTypes = { enabled = true },
-              functionLikeReturnTypes = { enabled = true },
-              enumMemberValues = { enabled = true },
-            },
-          },
-          javascript = {
-            updateImportsOnFileMove = { enabled = "always" },
-            inlayHints = {
-              parameterNames = { enabled = "all" },
-              parameterTypes = { enabled = true },
-              variableTypes = { enabled = true },
-              propertyDeclarationTypes = { enabled = true },
-              functionLikeReturnTypes = { enabled = true },
-              enumMemberValues = { enabled = true },
-            },
-          },
+          typescript = ts_js_language_settings,
+          javascript = ts_js_language_settings,
         },
       })
 
