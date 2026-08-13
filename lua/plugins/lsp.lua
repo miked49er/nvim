@@ -29,8 +29,7 @@ local function close_import_fold(bufnr)
     local line = range.startLine + 1
     if vim.fn.foldclosed(line) == -1 then
       vim.api.nvim_win_call(vim.fn.bufwinid(bufnr), function()
-        vim.api.nvim_win_set_cursor(0, { line, 0 })
-        vim.cmd("normal! zc")
+        vim.cmd(string.format("%d,%dfoldclose!", line, range.endLine + 1))
       end)
     end
   end)
