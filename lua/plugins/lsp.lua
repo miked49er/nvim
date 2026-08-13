@@ -246,10 +246,22 @@ return {
             end
           end
 
-          -- Auto-format ("lint") on save.
+          -- eslint on save: use its own fixAll command (same as
+          -- :LspEslintFixAll) rather than vim.lsp.buf.format, since
+          -- textDocument/formatting only exposes a subset of the fixes
+          -- eslint.applyAllFixes applies.
+          if client.name == "eslint" then
+            vim.api.nvim_create_autocmd("BufWritePre", {
+              group = vim.api.nvim_create_augroup("my.lsp", { clear = false }),
+              buffer = ev.buf,
+              callback = function()
+                vim.cmd("LspEslintFixAll")
+              end,
+            })
+          -- Auto-format ("lint") on save for other servers.
           -- Usually not needed if server supports "textDocument/willSaveWaitUntil".
           -- vtsls is excluded so it never fights eslint over JS/TS formatting.
-          if
+          elseif
             client.name ~= "vtsls"
             and not client:supports_method("textDocument/willSaveWaitUntil")
             and client:supports_method("textDocument/formatting")
