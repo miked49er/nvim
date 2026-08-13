@@ -207,6 +207,23 @@ return {
         vim.lsp.enable("sourcekit")
       end
 
+      -- Inlay hints can crash with "Invalid 'col': out of range" when an
+      -- extmark is redrawn against a line that's being actively edited
+      -- (stale hint positions vs. new line length), so keep them off
+      -- during insert mode.
+      vim.api.nvim_create_autocmd("InsertEnter", {
+        group = vim.api.nvim_create_augroup("my.lsp.inlay_hint", {}),
+        callback = function(ev)
+          vim.lsp.inlay_hint.enable(false, { bufnr = ev.buf })
+        end,
+      })
+      vim.api.nvim_create_autocmd("InsertLeave", {
+        group = "my.lsp.inlay_hint",
+        callback = function(ev)
+          vim.lsp.inlay_hint.enable(true, { bufnr = ev.buf })
+        end,
+      })
+
       vim.api.nvim_create_autocmd("LspAttach", {
         group = vim.api.nvim_create_augroup("my.lsp", {}),
         callback = function(ev)
