@@ -255,7 +255,20 @@ return {
               group = vim.api.nvim_create_augroup("my.lsp", { clear = false }),
               buffer = ev.buf,
               callback = function()
-                vim.cmd("LspEslintFixAll")
+                -- :LspEslintFixAll fires workspace/executeCommand async and
+                -- returns before the resulting workspace/applyEdit lands,
+                -- so the write would race ahead of the fix. request_sync
+                -- blocks until that round-trip (including the nested
+                -- applyEdit) completes.
+                client:request_sync("workspace/executeCommand", {
+                  command = "eslint.applyAllFixes",
+                  arguments = {
+                    {
+                      uri = vim.uri_from_bufnr(ev.buf),
+                      version = vim.lsp.util.buf_versions[ev.buf],
+                    },
+                  },
+                }, 1000, ev.buf)
               end,
             })
           -- Auto-format ("lint") on save for other servers.
