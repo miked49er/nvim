@@ -10,11 +10,13 @@ return {
     config.setup(opts)
     vim.bo.indentexpr = "v:lua.require'nvim-treesitter'.indentexpr()"
     config.install {
+      'css',
       'dockerfile',
       'lua',
       'luadoc',
       'javascript',
       'typescript',
+      'tsx',
       'java',
       'javadoc',
       'jsdoc',
