@@ -82,7 +82,10 @@ return {
     "mason-org/mason-lspconfig.nvim",
     opts = {
       ensure_installed = ensure_installed,
-      automatic_enable = true,
+      -- ts_ls is superseded by vtsls; exclude it in case it's still
+      -- installed from before the switch, since both would otherwise
+      -- attach and offer duplicate code actions (e.g. organizeImports).
+      automatic_enable = { exclude = { "ts_ls" } },
     },
     dependencies = {
       { "mason-org/mason.nvim", opts = {} },
@@ -268,10 +271,27 @@ return {
       end, { desc = "Toggle imports fold" })
 
       vim.keymap.set({ "n" }, "<M-o>", function()
+        local bufnr = vim.api.nvim_get_current_buf()
+        -- Inlay hints can crash (see InsertEnter/InsertLeave above) when
+        -- redrawn against a buffer mid-edit; organizeImports edits the
+        -- buffer outside of insert mode, so guard it here too.
+        vim.lsp.inlay_hint.enable(false, { bufnr = bufnr })
         vim.lsp.buf.code_action({
           apply = true,
           context = { only = { "source.organizeImports" }, diagnostics = {} },
         })
+        vim.defer_fn(function()
+          -- vtsls's own import formatting defaults to 4 spaces; let eslint
+          -- (the project's formatting source of truth) fix it up.
+          vim.lsp.buf.format({
+            bufnr = bufnr,
+            filter = function(client)
+              return client.name ~= "vtsls"
+            end,
+            timeout_ms = 1000,
+          })
+          vim.lsp.inlay_hint.enable(true, { bufnr = bufnr })
+        end, 200)
       end, { desc = "Organize imports" })
     end,
   },
