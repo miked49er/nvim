@@ -141,6 +141,7 @@ return {
         capabilities = capabilities,
         settings = {
           typescript = {
+            updateImportsOnFileMove = { enabled = "always" },
             inlayHints = {
               parameterNames = { enabled = "all" },
               parameterTypes = { enabled = true },
@@ -151,6 +152,7 @@ return {
             },
           },
           javascript = {
+            updateImportsOnFileMove = { enabled = "always" },
             inlayHints = {
               parameterNames = { enabled = "all" },
               parameterTypes = { enabled = true },
@@ -238,6 +240,13 @@ return {
       vim.keymap.set({ "n" }, "<leader>zi", function()
         toggle_import_fold(vim.api.nvim_get_current_buf())
       end, { desc = "Toggle imports fold" })
+
+      vim.keymap.set({ "n" }, "<M-o>", function()
+        vim.lsp.buf.code_action({
+          apply = true,
+          context = { only = { "source.organizeImports" }, diagnostics = {} },
+        })
+      end, { desc = "Organize imports" })
     end,
   },
 }
