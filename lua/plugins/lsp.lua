@@ -29,7 +29,7 @@ local function close_import_fold(bufnr)
     local line = range.startLine + 1
     vim.api.nvim_win_call(vim.fn.bufwinid(bufnr), function()
       if vim.fn.foldclosed(line) == -1 then
-        vim.cmd(string.format("%d,%dfoldclose!", line, range.endLine + 1))
+        pcall(vim.cmd, string.format("%d,%dfoldclose!", line, range.endLine + 1))
       end
     end)
   end)
