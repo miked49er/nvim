@@ -2,7 +2,7 @@ local is_mac = vim.uv.os_uname().sysname == "Darwin"
 
 -- Auto-fold the imports block on open. Set to false to leave imports
 -- expanded and only fold them via the <leader>zi toggle.
-vim.g.autofold_imports = true
+vim.g.autofold_imports = false
 
 local function import_fold_range(bufnr, callback)
   local clients = vim.lsp.get_clients({ bufnr = bufnr, method = "textDocument/foldingRange" })
