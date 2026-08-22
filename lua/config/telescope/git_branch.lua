@@ -63,25 +63,52 @@ local function list_branches()
   return entries
 end
 
-local function list_worktrees()
+-- Ordered list of {path, branch, is_main}; the first block from
+-- `git worktree list --porcelain` is always the main worktree.
+local function list_worktrees_ordered()
   local result = git({ "worktree", "list", "--porcelain" })
-  local map = {}
+  local list = {}
   if result.code ~= 0 then
-    return map
+    return list
   end
-  local path
+  local current
   for _, line in ipairs(vim.split(result.stdout or "", "\n")) do
     local wt_path = line:match("^worktree (.+)$")
     local branch = line:match("^branch refs/heads/(.+)$")
     if wt_path then
-      path = wt_path
-    elseif branch and path then
-      map[branch] = path
+      current = { path = wt_path, is_main = #list == 0 }
+      table.insert(list, current)
+    elseif branch and current then
+      current.branch = branch
     elseif line == "" then
-      path = nil
+      current = nil
+    end
+  end
+  return list
+end
+
+local function list_worktrees()
+  local map = {}
+  for _, wt in ipairs(list_worktrees_ordered()) do
+    if wt.branch then
+      map[wt.branch] = wt.path
     end
   end
   return map
+end
+
+local function list_local_branches()
+  return vim.tbl_filter(function(entry)
+    return entry.is_local
+  end, list_branches())
+end
+
+local function confirm(prompt, callback)
+  vim.ui.select({ "Yes", "No" }, { prompt = prompt }, function(choice)
+    if choice == "Yes" then
+      callback()
+    end
+  end)
 end
 
 local function sanitize_worktree_name(branch)
@@ -141,6 +168,27 @@ local function prompt_base_ref(callback)
               callback(prompt)
             else
               callback(head)
+            end
+          end)
+          return true
+        end,
+      })
+      :find()
+end
+
+-- Select-only picker (no create-on-type) over an arbitrary entry list.
+local function pick_entry(title, entries, entry_maker, callback)
+  pickers
+      .new(themes.get_dropdown({}), {
+        prompt_title = title,
+        finder = finders.new_table({ results = entries, entry_maker = entry_maker }),
+        sorter = conf.generic_sorter({}),
+        attach_mappings = function(prompt_bufnr)
+          actions.select_default:replace(function()
+            local selection = action_state.get_selected_entry()
+            actions.close(prompt_bufnr)
+            if selection then
+              callback(selection.value)
             end
           end)
           return true
@@ -219,6 +267,125 @@ local function create_worktree_for_branch(entry)
   open_worktree_tab(path)
 end
 
+local function tabnr_for_cwd(path)
+  local normalized = vim.fs.normalize(path)
+  for _, tabnr in ipairs(vim.api.nvim_list_tabpages()) do
+    if vim.fs.normalize(vim.fn.getcwd(-1, tabnr)) == normalized then
+      return tabnr
+    end
+  end
+  return nil
+end
+
+local function delete_branch_action()
+  pick_entry("Delete Branch", list_local_branches(), branch_entry_maker, function(entry)
+    confirm("Delete branch " .. entry.name .. "?", function()
+      local result = git({ "branch", "-d", entry.name })
+      if result.code == 0 then
+        vim.notify("Deleted branch " .. entry.name)
+        return
+      end
+      confirm(entry.name .. " is not fully merged. Force delete?", function()
+        local force_result = git({ "branch", "-D", entry.name })
+        if force_result.code ~= 0 then
+          notify_err("git branch -D failed", force_result)
+          return
+        end
+        vim.notify("Deleted branch " .. entry.name)
+      end)
+    end)
+  end)
+end
+
+local function remove_worktree_action()
+  local worktrees = vim.tbl_filter(function(wt)
+    return not wt.is_main
+  end, list_worktrees_ordered())
+
+  pick_entry("Remove Worktree", worktrees, function(wt)
+    return { value = wt, display = wt.path, ordinal = wt.path }
+  end, function(wt)
+    confirm("Remove worktree at " .. wt.path .. "?", function()
+      local function finish()
+        vim.notify("Removed worktree " .. wt.path)
+        local tabnr = tabnr_for_cwd(wt.path)
+        if tabnr and #vim.api.nvim_list_tabpages() > 1 then
+          vim.cmd(tabnr .. "tabclose")
+        end
+      end
+      local result = git({ "worktree", "remove", wt.path })
+      if result.code == 0 then
+        finish()
+        return
+      end
+      confirm(wt.path .. " has changes. Force remove?", function()
+        local force_result = git({ "worktree", "remove", "--force", wt.path })
+        if force_result.code ~= 0 then
+          notify_err("git worktree remove failed", force_result)
+          return
+        end
+        finish()
+      end)
+    end)
+  end)
+end
+
+local function rename_branch_action()
+  pick_entry("Rename Branch", list_local_branches(), branch_entry_maker, function(entry)
+    vim.ui.input({ prompt = "New name: ", default = entry.name }, function(input)
+      if input == nil or input == "" then
+        return
+      end
+      local new_name = input:gsub(" ", "-")
+      local result = git({ "branch", "-m", entry.name, new_name })
+      if result.code ~= 0 then
+        notify_err("git branch -m failed", result)
+        return
+      end
+      vim.notify("Renamed branch " .. entry.name .. " to " .. new_name)
+    end)
+  end)
+end
+
+local function merge_branch_action()
+  pick_entry("Merge into " .. current_head(), list_branches(), branch_entry_maker, function(entry)
+    local source = entry.is_local and entry.name or entry.remote
+    local result = git({ "merge", source })
+    if result.code == 0 then
+      vim.notify("Merged " .. source .. " into " .. current_head())
+      return
+    end
+    local unmerged = git_lines({ "diff", "--name-only", "--diff-filter=U" })
+    if #unmerged > 0 then
+      vim.notify("Merge conflicts in " .. #unmerged .. " file(s); opening changes panel", vim.log.levels.WARN)
+      require("diffbandit").commit_panel()
+      return
+    end
+    notify_err("git merge failed", result)
+  end)
+end
+
+local function push_current()
+  local branch = current_head()
+  local has_upstream = git({ "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}" }).code == 0
+  local args = has_upstream and { "push" } or { "push", "-u", "origin", branch }
+  local result = git(args)
+  if result.code ~= 0 then
+    notify_err("git push failed", result)
+    return
+  end
+  vim.notify("Pushed " .. branch)
+end
+
+local function pull_current()
+  local result = git({ "pull" })
+  if result.code ~= 0 then
+    notify_err("git pull failed", result)
+    return
+  end
+  vim.notify("Pulled " .. current_head())
+end
+
 local function handle_existing(mode, entry)
   if mode == "branch" then
     if entry.is_local then
@@ -286,18 +453,44 @@ local function open_picker(mode)
       :find()
 end
 
-local function pick_mode(callback)
+local mode_actions = {
+  ["Branch"] = function()
+    open_picker("branch")
+  end,
+  ["Worktree"] = function()
+    open_picker("worktree")
+  end,
+  ["Delete Branch"] = delete_branch_action,
+  ["Remove Worktree"] = remove_worktree_action,
+  ["Rename Branch"] = rename_branch_action,
+  ["Merge"] = merge_branch_action,
+  ["Push"] = push_current,
+  ["Pull"] = pull_current,
+}
+
+local mode_order = {
+  "Branch",
+  "Worktree",
+  "Delete Branch",
+  "Remove Worktree",
+  "Rename Branch",
+  "Merge",
+  "Push",
+  "Pull",
+}
+
+local function pick_mode()
   pickers
       .new(themes.get_dropdown({}), {
         prompt_title = "Git",
-        finder = finders.new_table({ results = { "Branch", "Worktree" } }),
+        finder = finders.new_table({ results = mode_order }),
         sorter = conf.generic_sorter({}),
         attach_mappings = function(prompt_bufnr)
           actions.select_default:replace(function()
             local selection = action_state.get_selected_entry()
             actions.close(prompt_bufnr)
             if selection then
-              callback(selection[1])
+              mode_actions[selection[1]]()
             end
           end)
           return true
@@ -307,15 +500,7 @@ local function pick_mode(callback)
 end
 
 M.setup = function()
-  vim.keymap.set("n", "<M-b>", function()
-    pick_mode(function(choice)
-      if choice == "Branch" then
-        open_picker("branch")
-      elseif choice == "Worktree" then
-        open_picker("worktree")
-      end
-    end)
-  end, { desc = "Git branch/worktree menu" })
+  vim.keymap.set("n", "<M-b>", pick_mode, { desc = "Git branch/worktree menu" })
 
   vim.keymap.set("n", "<M-b>b", function()
     open_picker("branch")
@@ -324,6 +509,9 @@ M.setup = function()
   vim.keymap.set("n", "<M-b>w", function()
     open_picker("worktree")
   end, { desc = "Switch/create git worktree" })
+
+  vim.keymap.set("n", "<M-b>p", pull_current, { desc = "Git pull" })
+  vim.keymap.set("n", "<M-b>P", push_current, { desc = "Git push" })
 end
 
 return M
