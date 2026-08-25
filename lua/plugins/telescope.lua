@@ -11,6 +11,7 @@ return {
           find_files = {
             theme = "ivy",
             hidden = true,
+            file_ignore_patterns = { "%.claude[\\/]worktrees[\\/]" },
           },
         },
         extensions = {
@@ -24,7 +25,9 @@ return {
 
       local builtin = require("telescope.builtin")
       vim.keymap.set("n", "<leader>fh", builtin.help_tags)
-      vim.keymap.set("n", "<leader>fd", builtin.find_files)
+      vim.keymap.set("n", "<leader>fd", function()
+        builtin.find_files({ cwd = vim.fn.getcwd() })
+      end)
       vim.keymap.set("n", "<leader>en", function()
         local opts = require("telescope.themes").get_dropdown({
           cwd = vim.fn.stdpath("config"),
