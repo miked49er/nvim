@@ -422,7 +422,7 @@ local function open_picker(mode)
   local entries = list_branches()
 
   pickers
-      .new({}, {
+      .new(themes.get_dropdown({}), {
         prompt_title = mode == "branch" and "Switch/Create Branch" or "Switch/Create Worktree",
         finder = finders.new_table({
           results = entries,
