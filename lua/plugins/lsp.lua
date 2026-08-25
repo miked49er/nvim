@@ -44,7 +44,7 @@ local function toggle_import_fold(bufnr)
   end)
 end
 
-local ensure_installed = {
+local all_servers = {
   "autohotkey_lsp",
   "awk_ls",
   "bashls",
@@ -52,7 +52,7 @@ local ensure_installed = {
   "docker_language_server",
   "eslint",
   "gh_actions_ls",
-  --'gopls',
+  "gopls",
   "gradle_ls",
   "graphql",
   "groovyls",
@@ -70,7 +70,48 @@ local ensure_installed = {
 if is_mac then
   -- Objective-C / native iOS headers. Swift itself needs sourcekit-lsp,
   -- which isn't mason-managed (ships with the Xcode toolchain).
-  table.insert(ensure_installed, "clangd")
+  table.insert(all_servers, "clangd")
+end
+
+-- Servers whose language server itself is generic/mason-managed, but which
+-- are useless (and noisy) without an external, non-mason-managed toolchain
+-- actually installed on this machine. Skip installing/enabling them when
+-- the required executable(s) aren't on PATH, rather than erroring per-buffer.
+local required_executables = {
+  gopls = { "go" },
+  jdtls = { "java" },
+  kotlin_lsp = { "kotlin" },
+  gradle_ls = { "gradle" },
+  groovyls = { "groovy" },
+  openscad_lsp = { "openscad" },
+  docker_language_server = { "docker" },
+  autohotkey_lsp = { "AutoHotkey", "AutoHotkeyU64" },
+}
+
+local function has_required_executable(name)
+  local exes = required_executables[name]
+  if not exes then
+    return true
+  end
+  for _, exe in ipairs(exes) do
+    if vim.fn.executable(exe) == 1 then
+      return true
+    end
+  end
+  return false
+end
+
+-- ts_ls is superseded by vtsls; exclude it in case it's still installed
+-- from before the switch, since both would otherwise attach and offer
+-- duplicate code actions (e.g. organizeImports).
+local disabled_servers = { "ts_ls" }
+local ensure_installed = {}
+for _, name in ipairs(all_servers) do
+  if has_required_executable(name) then
+    table.insert(ensure_installed, name)
+  else
+    table.insert(disabled_servers, name)
+  end
 end
 
 return {
@@ -82,10 +123,7 @@ return {
     "mason-org/mason-lspconfig.nvim",
     opts = {
       ensure_installed = ensure_installed,
-      -- ts_ls is superseded by vtsls; exclude it in case it's still
-      -- installed from before the switch, since both would otherwise
-      -- attach and offer duplicate code actions (e.g. organizeImports).
-      automatic_enable = { exclude = { "ts_ls" } },
+      automatic_enable = { exclude = disabled_servers },
     },
     dependencies = {
       { "mason-org/mason.nvim", opts = {} },
