@@ -435,7 +435,7 @@ local function open_picker(mode)
           end,
         }),
         sorter = conf.generic_sorter({}),
-        attach_mappings = function(prompt_bufnr)
+        attach_mappings = function(prompt_bufnr, map)
           actions.select_default:replace(function()
             local selection = action_state.get_selected_entry()
             local prompt = vim.trim(action_state.get_current_line())
@@ -447,56 +447,76 @@ local function open_picker(mode)
               handle_new(mode, prompt)
             end
           end)
+          map("i", "<Esc>", actions.close)
           return true
         end,
       })
       :find()
 end
 
-local mode_actions = {
-  ["Branch"] = function()
-    open_picker("branch")
-  end,
-  ["Worktree"] = function()
-    open_picker("worktree")
-  end,
-  ["Delete Branch"] = delete_branch_action,
-  ["Remove Worktree"] = remove_worktree_action,
-  ["Rename Branch"] = rename_branch_action,
-  ["Merge"] = merge_branch_action,
-  ["Push"] = push_current,
-  ["Pull"] = pull_current,
-}
-
-local mode_order = {
-  "Branch",
-  "Worktree",
-  "Delete Branch",
-  "Remove Worktree",
-  "Rename Branch",
-  "Merge",
-  "Push",
-  "Pull",
-}
-
-local function pick_mode()
+local function pick_from(title, items, actions_by_label, on_back)
   pickers
       .new(themes.get_dropdown({}), {
-        prompt_title = "Git",
-        finder = finders.new_table({ results = mode_order }),
+        prompt_title = title,
+        finder = finders.new_table({ results = items }),
         sorter = conf.generic_sorter({}),
-        attach_mappings = function(prompt_bufnr)
+        attach_mappings = function(prompt_bufnr, map)
           actions.select_default:replace(function()
             local selection = action_state.get_selected_entry()
             actions.close(prompt_bufnr)
             if selection then
-              mode_actions[selection[1]]()
+              actions_by_label[selection[1]]()
             end
           end)
+          if on_back then
+            local function back()
+              actions.close(prompt_bufnr)
+              on_back()
+            end
+            map("n", "<Esc>", back)
+            map("i", "<Esc>", back)
+          else
+            map("i", "<Esc>", actions.close)
+          end
           return true
         end,
       })
       :find()
+end
+
+local branch_submenu_order = { "Switch/Create", "Delete", "Rename", "Merge" }
+local branch_submenu_actions = {
+  ["Switch/Create"] = function()
+    open_picker("branch")
+  end,
+  ["Delete"] = delete_branch_action,
+  ["Rename"] = rename_branch_action,
+  ["Merge"] = merge_branch_action,
+}
+
+local worktree_submenu_order = { "Switch/Create", "Remove" }
+local worktree_submenu_actions = {
+  ["Switch/Create"] = function()
+    open_picker("worktree")
+  end,
+  ["Remove"] = remove_worktree_action,
+}
+
+local mode_order = { "Branch", "Worktree", "Push", "Pull" }
+local pick_mode
+local mode_actions = {
+  ["Branch"] = function()
+    pick_from("Branch", branch_submenu_order, branch_submenu_actions, pick_mode)
+  end,
+  ["Worktree"] = function()
+    pick_from("Worktree", worktree_submenu_order, worktree_submenu_actions, pick_mode)
+  end,
+  ["Push"] = push_current,
+  ["Pull"] = pull_current,
+}
+
+pick_mode = function()
+  pick_from("Git", mode_order, mode_actions)
 end
 
 M.setup = function()
