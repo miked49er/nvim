@@ -11,7 +11,15 @@ return {
           find_files = {
             theme = "ivy",
             hidden = true,
-            file_ignore_patterns = { "%.claude[\\/]worktrees[\\/]" },
+            no_ignore = true,
+            file_ignore_patterns = {
+              "%.claude[\\/]worktrees[\\/]",
+              "%.git[\\/]",
+              "node_modules[\\/]",
+              "dist[\\/]",
+              "build[\\/]",
+              "target[\\/]",
+            },
           },
         },
         extensions = {
@@ -37,6 +45,18 @@ return {
       vim.keymap.set("n", "<leader>ep", function()
         builtin.find_files({
           cwd = vim.fs.joinpath(vim.fn.stdpath("data"), "lazy"),
+        })
+      end)
+      vim.keymap.set("n", "<leader>fN", function()
+        local dir = vim.fn.input("Search in dir: ", vim.fn.getcwd() .. "/", "dir")
+        if dir == "" then
+          return
+        end
+        builtin.find_files({
+          cwd = dir,
+          hidden = true,
+          no_ignore = true,
+          file_ignore_patterns = {},
         })
       end)
 
