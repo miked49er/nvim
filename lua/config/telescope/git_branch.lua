@@ -138,6 +138,7 @@ end
 local function open_worktree_tab(path)
   vim.cmd("tabnew")
   vim.cmd("tcd " .. vim.fn.fnameescape(path))
+  vim.cmd("Alpha")
   vim.notify("Worktree: " .. path)
 end
 
