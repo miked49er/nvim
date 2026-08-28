@@ -6,15 +6,32 @@ return {
       local statusline = require 'mini.statusline'
       local worktree = require 'config.worktree'
 
-      -- Named color (not a hex pulled from one colorscheme) so it stays
-      -- electric blue across theme changes, matching the tabline's worktree
-      -- highlight, and doesn't collide with MiniStatuslineModeOther (used
-      -- for Terminal mode, linked to IncSearch).
-      vim.api.nvim_set_hl(0, 'MiniStatuslineWorktree', { fg = 'black', bg = 'DeepSkyBlue', bold = true })
+      -- Solid-background look, one group per palette slot so the statusline
+      -- indicator matches whatever color the tabline assigned that
+      -- worktree. Doesn't collide with MiniStatuslineModeOther (used for
+      -- Terminal mode, linked to IncSearch).
+      local function worktree_hl_group(slot)
+        return 'MiniStatuslineWorktree' .. slot
+      end
+
+      local function link_worktree_hl()
+        for slot = 1, worktree.PALETTE_SIZE do
+          local color = worktree.color_for_slot(slot)
+          vim.api.nvim_set_hl(0, worktree_hl_group(slot), { fg = worktree.fg_for_bg(color), bg = color, bold = true })
+        end
+      end
+      link_worktree_hl()
+      vim.api.nvim_create_autocmd('ColorScheme', {
+        desc = 'Re-derive statusline worktree highlights for the new colorscheme',
+        callback = link_worktree_hl,
+      })
 
       local function worktree_section()
         local name = worktree.label_for_cwd(vim.fn.getcwd(0))
-        return name and ('' .. name .. '') or ''
+        if not name then
+          return '', 'MiniStatuslineDevinfo'
+        end
+        return worktree.ICON .. ' ' .. name, worktree_hl_group(worktree.slot_for(name))
       end
 
       -- Always relative to cwd (tab's repo/worktree root, via `tcd`) instead
@@ -28,7 +45,7 @@ return {
 
       local function active_content()
         local mode, mode_hl = statusline.section_mode { trunc_width = 120 }
-        local worktree      = worktree_section()
+        local worktree, worktree_hl = worktree_section()
         local git           = statusline.section_git { trunc_width = 40 }
         local diff          = statusline.section_diff { trunc_width = 75 }
         local diagnostics   = statusline.section_diagnostics { trunc_width = 75 }
@@ -40,7 +57,7 @@ return {
 
         return statusline.combine_groups {
           { hl = mode_hl,                    strings = { mode } },
-          { hl = 'MiniStatuslineWorktree',    strings = { worktree } },
+          { hl = worktree_hl,                 strings = { worktree } },
           { hl = 'MiniStatuslineDevinfo',     strings = { git, diff, diagnostics, lsp } },
           '%<',
           { hl = 'MiniStatuslineFilename',    strings = { filename } },

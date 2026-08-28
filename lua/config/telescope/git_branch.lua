@@ -7,8 +7,13 @@ local conf = require("telescope.config").values
 local actions = require("telescope.actions")
 local action_state = require("telescope.actions.state")
 local themes = require("telescope.themes")
+local menu_stack = require("config.telescope.menu_stack")
+local worktree = require("config.worktree")
 
 local M = {}
+
+local WORKTREE_ICON = worktree.ICON
+local WORKTREE_HL = "GitBranchWorktree"
 
 local function git(args)
   local cmd = { "git" }
@@ -103,12 +108,19 @@ local function list_local_branches()
   end, list_branches())
 end
 
-local function confirm(prompt, callback)
-  vim.ui.select({ "Yes", "No" }, { prompt = prompt }, function(choice)
-    if choice == "Yes" then
-      callback()
+-- Stable partition: branches with a worktree checked out first, preserving
+-- list_branches()'s existing relative order within each group.
+local function worktrees_first(entries, worktree_map)
+  local with_wt, without_wt = {}, {}
+  for _, entry in ipairs(entries) do
+    if worktree_map[entry.name] then
+      table.insert(with_wt, entry)
+    else
+      table.insert(without_wt, entry)
     end
-  end)
+  end
+  vim.list_extend(with_wt, without_wt)
+  return with_wt
 end
 
 local function sanitize_worktree_name(branch)
@@ -141,6 +153,62 @@ local function branch_entry_maker(entry)
   }
 end
 
+-- Generic menu-of-labeled-actions picker with Esc-to-back support via
+-- menu_stack (see that module for how "back" is threaded through).
+local function pick_from(title, items, actions_by_label)
+  pickers
+      .new(themes.get_dropdown({}), {
+        prompt_title = title,
+        finder = finders.new_table({ results = items }),
+        sorter = conf.generic_sorter({}),
+        attach_mappings = function(prompt_bufnr, map)
+          actions.select_default:replace(function()
+            local selection = action_state.get_selected_entry()
+            actions.close(prompt_bufnr)
+            if selection then
+              actions_by_label[selection[1]]()
+            end
+          end)
+          menu_stack.attach_back(map, prompt_bufnr)
+          return true
+        end,
+      })
+      :find()
+end
+
+-- Yes/No confirm as a Telescope picker (replaces vim.ui.select) so it slots
+-- into the same back-stack as everything else. "No" behaves like Esc.
+local function confirm_picker(prompt, on_yes)
+  pick_from(prompt, { "Yes", "No" }, {
+    Yes = on_yes,
+    No = menu_stack.pop_and_open,
+  })
+end
+
+-- Free-text entry as a Telescope picker (replaces vim.ui.input) for the same
+-- reason: consistent look, and Esc-to-back for free.
+local function prompt_text(title, default, callback)
+  pickers
+      .new(themes.get_dropdown({}), {
+        prompt_title = title,
+        default_text = default or "",
+        finder = finders.new_table({ results = {} }),
+        sorter = conf.generic_sorter({}),
+        attach_mappings = function(prompt_bufnr, map)
+          actions.select_default:replace(function()
+            local input = vim.trim(action_state.get_current_line())
+            actions.close(prompt_bufnr)
+            if input ~= "" then
+              callback(input)
+            end
+          end)
+          menu_stack.attach_back(map, prompt_bufnr)
+          return true
+        end,
+      })
+      :find()
+end
+
 -- Reuses the same branch listing as the switch/create picker, but only ever
 -- resolves to a ref string: selecting an entry uses its name, typing text
 -- uses that text verbatim, and accepting empty input falls back to HEAD.
@@ -156,7 +224,7 @@ local function prompt_base_ref(callback)
           entry_maker = branch_entry_maker,
         }),
         sorter = conf.generic_sorter({}),
-        attach_mappings = function(prompt_bufnr)
+        attach_mappings = function(prompt_bufnr, map)
           actions.select_default:replace(function()
             local selection = action_state.get_selected_entry()
             local prompt = vim.trim(action_state.get_current_line())
@@ -170,6 +238,7 @@ local function prompt_base_ref(callback)
               callback(head)
             end
           end)
+          menu_stack.attach_back(map, prompt_bufnr)
           return true
         end,
       })
@@ -183,7 +252,7 @@ local function pick_entry(title, entries, entry_maker, callback)
         prompt_title = title,
         finder = finders.new_table({ results = entries, entry_maker = entry_maker }),
         sorter = conf.generic_sorter({}),
-        attach_mappings = function(prompt_bufnr)
+        attach_mappings = function(prompt_bufnr, map)
           actions.select_default:replace(function()
             local selection = action_state.get_selected_entry()
             actions.close(prompt_bufnr)
@@ -191,6 +260,42 @@ local function pick_entry(title, entries, entry_maker, callback)
               callback(selection.value)
             end
           end)
+          menu_stack.attach_back(map, prompt_bufnr)
+          return true
+        end,
+      })
+      :find()
+end
+
+-- Like pick_entry, but <Tab> toggles multi-selection (bufferline/Telescope's
+-- usual convention). Enter calls back with the multi-selected values, or
+-- falls back to the single highlighted entry when nothing was tab-toggled.
+local function pick_entries_multi(title, entries, entry_maker, callback)
+  pickers
+      .new(themes.get_dropdown({}), {
+        prompt_title = title .. " (<Tab> to select multiple)",
+        finder = finders.new_table({ results = entries, entry_maker = entry_maker }),
+        sorter = conf.generic_sorter({}),
+        attach_mappings = function(prompt_bufnr, map)
+          map({ "i", "n" }, "<Tab>", actions.toggle_selection + actions.move_selection_worse)
+          actions.select_default:replace(function()
+            local picker = action_state.get_current_picker(prompt_bufnr)
+            local multi = picker:get_multi_selection()
+            actions.close(prompt_bufnr)
+            if #multi > 0 then
+              local values = {}
+              for _, entry in ipairs(multi) do
+                table.insert(values, entry.value)
+              end
+              callback(values)
+            else
+              local selection = action_state.get_selected_entry()
+              if selection then
+                callback({ selection.value })
+              end
+            end
+          end)
+          menu_stack.attach_back(map, prompt_bufnr)
           return true
         end,
       })
@@ -277,74 +382,161 @@ local function tabnr_for_cwd(path)
   return nil
 end
 
+local function delete_branch(entry)
+  local result = git({ "branch", "-d", entry.name })
+  if result.code == 0 then
+    vim.notify("Deleted branch " .. entry.name)
+    return true
+  end
+  return false
+end
+
 local function delete_branch_action()
-  pick_entry("Delete Branch", list_local_branches(), branch_entry_maker, function(entry)
-    confirm("Delete branch " .. entry.name .. "?", function()
-      local result = git({ "branch", "-d", entry.name })
-      if result.code == 0 then
-        vim.notify("Deleted branch " .. entry.name)
+  local open_list
+  open_list = function()
+    pick_entries_multi("Delete Branch", list_local_branches(), branch_entry_maker, function(selected)
+      menu_stack.push(open_list)
+
+      -- Single selection keeps the interactive force-delete prompt. Batch
+      -- delete skips per-item prompts and reports which ones need a manual
+      -- force-delete, same as the worktree removal flow.
+      if #selected == 1 then
+        local entry = selected[1]
+        confirm_picker("Delete branch " .. entry.name .. "?", function()
+          if delete_branch(entry) then
+            return
+          end
+          menu_stack.push(open_list)
+          confirm_picker(entry.name .. " is not fully merged. Force delete?", function()
+            local force_result = git({ "branch", "-D", entry.name })
+            if force_result.code ~= 0 then
+              notify_err("git branch -D failed", force_result)
+              return
+            end
+            vim.notify("Deleted branch " .. entry.name)
+          end)
+        end)
         return
       end
-      confirm(entry.name .. " is not fully merged. Force delete?", function()
-        local force_result = git({ "branch", "-D", entry.name })
-        if force_result.code ~= 0 then
-          notify_err("git branch -D failed", force_result)
-          return
+
+      local names = {}
+      for _, entry in ipairs(selected) do
+        table.insert(names, entry.name)
+      end
+      confirm_picker("Delete " .. #selected .. " branches: " .. table.concat(names, ", ") .. "?", function()
+        local failed = {}
+        for _, entry in ipairs(selected) do
+          if not delete_branch(entry) then
+            table.insert(failed, entry.name)
+          end
         end
-        vim.notify("Deleted branch " .. entry.name)
+        if #failed > 0 then
+          vim.notify(
+            "Not fully merged, delete individually to force: " .. table.concat(failed, ", "),
+            vim.log.levels.WARN
+          )
+        end
       end)
     end)
-  end)
+  end
+  open_list()
+end
+
+local function remove_worktree(wt)
+  local function finish()
+    vim.notify("Removed worktree " .. wt.path)
+    local tabnr = tabnr_for_cwd(wt.path)
+    if tabnr and #vim.api.nvim_list_tabpages() > 1 then
+      vim.cmd(tabnr .. "tabclose")
+    end
+  end
+  local result = git({ "worktree", "remove", wt.path })
+  if result.code == 0 then
+    finish()
+    return true
+  end
+  return false
 end
 
 local function remove_worktree_action()
-  local worktrees = vim.tbl_filter(function(wt)
-    return not wt.is_main
-  end, list_worktrees_ordered())
+  local open_list
+  open_list = function()
+    local worktrees = vim.tbl_filter(function(wt)
+      return not wt.is_main
+    end, list_worktrees_ordered())
 
-  pick_entry("Remove Worktree", worktrees, function(wt)
-    return { value = wt, display = wt.path, ordinal = wt.path }
-  end, function(wt)
-    confirm("Remove worktree at " .. wt.path .. "?", function()
-      local function finish()
-        vim.notify("Removed worktree " .. wt.path)
-        local tabnr = tabnr_for_cwd(wt.path)
-        if tabnr and #vim.api.nvim_list_tabpages() > 1 then
-          vim.cmd(tabnr .. "tabclose")
-        end
-      end
-      local result = git({ "worktree", "remove", wt.path })
-      if result.code == 0 then
-        finish()
+    pick_entries_multi("Remove Worktree", worktrees, function(wt)
+      local name = vim.fs.basename(wt.path)
+      return { value = wt, display = name, ordinal = name }
+    end, function(selected)
+      menu_stack.push(open_list)
+
+      -- Single selection keeps the interactive force-remove prompt. Batch
+      -- removal skips per-item prompts (stacking a confirm per failure would
+      -- be a mess) and just reports which ones need a manual force-remove.
+      if #selected == 1 then
+        local wt = selected[1]
+        confirm_picker("Remove worktree at " .. wt.path .. "?", function()
+          if remove_worktree(wt) then
+            return
+          end
+          menu_stack.push(open_list)
+          confirm_picker(wt.path .. " has changes. Force remove?", function()
+            local force_result = git({ "worktree", "remove", "--force", wt.path })
+            if force_result.code ~= 0 then
+              notify_err("git worktree remove failed", force_result)
+              return
+            end
+            vim.notify("Removed worktree " .. wt.path)
+            local tabnr = tabnr_for_cwd(wt.path)
+            if tabnr and #vim.api.nvim_list_tabpages() > 1 then
+              vim.cmd(tabnr .. "tabclose")
+            end
+          end)
+        end)
         return
       end
-      confirm(wt.path .. " has changes. Force remove?", function()
-        local force_result = git({ "worktree", "remove", "--force", wt.path })
-        if force_result.code ~= 0 then
-          notify_err("git worktree remove failed", force_result)
-          return
+
+      local names = {}
+      for _, wt in ipairs(selected) do
+        table.insert(names, vim.fs.basename(wt.path))
+      end
+      confirm_picker("Remove " .. #selected .. " worktrees: " .. table.concat(names, ", ") .. "?", function()
+        local failed = {}
+        for _, wt in ipairs(selected) do
+          if not remove_worktree(wt) then
+            table.insert(failed, vim.fs.basename(wt.path))
+          end
         end
-        finish()
+        if #failed > 0 then
+          vim.notify(
+            "Has changes, remove individually to force: " .. table.concat(failed, ", "),
+            vim.log.levels.WARN
+          )
+        end
       end)
     end)
-  end)
+  end
+  open_list()
 end
 
 local function rename_branch_action()
-  pick_entry("Rename Branch", list_local_branches(), branch_entry_maker, function(entry)
-    vim.ui.input({ prompt = "New name: ", default = entry.name }, function(input)
-      if input == nil or input == "" then
-        return
-      end
-      local new_name = input:gsub(" ", "-")
-      local result = git({ "branch", "-m", entry.name, new_name })
-      if result.code ~= 0 then
-        notify_err("git branch -m failed", result)
-        return
-      end
-      vim.notify("Renamed branch " .. entry.name .. " to " .. new_name)
+  local open_list
+  open_list = function()
+    pick_entry("Rename Branch", list_local_branches(), branch_entry_maker, function(entry)
+      menu_stack.push(open_list)
+      prompt_text("New name for " .. entry.name, entry.name, function(input)
+        local new_name = input:gsub(" ", "-")
+        local result = git({ "branch", "-m", entry.name, new_name })
+        if result.code ~= 0 then
+          notify_err("git branch -m failed", result)
+          return
+        end
+        vim.notify("Renamed branch " .. entry.name .. " to " .. new_name)
+      end)
     end)
-  end)
+  end
+  open_list()
 end
 
 local function merge_branch_action()
@@ -404,22 +596,11 @@ local function handle_existing(mode, entry)
   end
 end
 
-local function handle_new(mode, name)
-  name = name:gsub(" ", "-")
-  if mode == "branch" then
-    prompt_base_ref(function(base)
-      create_and_switch_branch(name, base)
-    end)
-  else
-    prompt_base_ref(function(base)
-      create_worktree_new_branch(name, base)
-    end)
-  end
-end
+local handle_new
 
 local function open_picker(mode)
-  local worktree_map = mode == "worktree" and list_worktrees() or nil
-  local entries = list_branches()
+  local worktree_map = list_worktrees()
+  local entries = worktrees_first(list_branches(), worktree_map)
 
   pickers
       .new(themes.get_dropdown({}), {
@@ -428,8 +609,15 @@ local function open_picker(mode)
           results = entries,
           entry_maker = function(entry)
             local made = branch_entry_maker(entry)
-            if worktree_map and worktree_map[entry.name] then
-              made.display = made.display .. "  (" .. worktree_map[entry.name] .. ")"
+            local wt_path = worktree_map[entry.name]
+            if mode == "worktree" and wt_path then
+              made.display = made.display .. "  (" .. wt_path .. ")"
+            end
+            if wt_path then
+              local text = WORKTREE_ICON .. " " .. made.display
+              made.display = function()
+                return text, { { { 0, #text }, WORKTREE_HL } }
+              end
             end
             return made
           end,
@@ -447,86 +635,111 @@ local function open_picker(mode)
               handle_new(mode, prompt)
             end
           end)
-          map("i", "<Esc>", actions.close)
+          menu_stack.attach_back(map, prompt_bufnr)
           return true
         end,
       })
       :find()
 end
 
-local function pick_from(title, items, actions_by_label, on_back)
-  pickers
-      .new(themes.get_dropdown({}), {
-        prompt_title = title,
-        finder = finders.new_table({ results = items }),
-        sorter = conf.generic_sorter({}),
-        attach_mappings = function(prompt_bufnr, map)
-          actions.select_default:replace(function()
-            local selection = action_state.get_selected_entry()
-            actions.close(prompt_bufnr)
-            if selection then
-              actions_by_label[selection[1]]()
-            end
-          end)
-          if on_back then
-            local function back()
-              actions.close(prompt_bufnr)
-              on_back()
-            end
-            map("n", "<Esc>", back)
-            map("i", "<Esc>", back)
-          else
-            map("i", "<Esc>", actions.close)
-          end
-          return true
-        end,
-      })
-      :find()
+handle_new = function(mode, name)
+  name = name:gsub(" ", "-")
+  local function reopen()
+    open_picker(mode)
+  end
+  menu_stack.push(reopen)
+  if mode == "branch" then
+    prompt_base_ref(function(base)
+      create_and_switch_branch(name, base)
+    end)
+  else
+    prompt_base_ref(function(base)
+      create_worktree_new_branch(name, base)
+    end)
+  end
 end
+
+local function link_worktree_hl()
+  vim.api.nvim_set_hl(0, WORKTREE_HL, worktree.HL)
+end
+
+local open_branch_submenu, open_worktree_submenu, pick_mode
 
 local branch_submenu_order = { "Switch/Create", "Delete", "Rename", "Merge" }
 local branch_submenu_actions = {
   ["Switch/Create"] = function()
+    menu_stack.push(open_branch_submenu)
     open_picker("branch")
   end,
-  ["Delete"] = delete_branch_action,
-  ["Rename"] = rename_branch_action,
-  ["Merge"] = merge_branch_action,
+  ["Delete"] = function()
+    menu_stack.push(open_branch_submenu)
+    delete_branch_action()
+  end,
+  ["Rename"] = function()
+    menu_stack.push(open_branch_submenu)
+    rename_branch_action()
+  end,
+  ["Merge"] = function()
+    menu_stack.push(open_branch_submenu)
+    merge_branch_action()
+  end,
 }
+
+open_branch_submenu = function()
+  pick_from("Branch", branch_submenu_order, branch_submenu_actions)
+end
 
 local worktree_submenu_order = { "Switch/Create", "Remove" }
 local worktree_submenu_actions = {
   ["Switch/Create"] = function()
+    menu_stack.push(open_worktree_submenu)
     open_picker("worktree")
   end,
-  ["Remove"] = remove_worktree_action,
+  ["Remove"] = function()
+    menu_stack.push(open_worktree_submenu)
+    remove_worktree_action()
+  end,
 }
 
+open_worktree_submenu = function()
+  pick_from("Worktree", worktree_submenu_order, worktree_submenu_actions)
+end
+
 local mode_order = { "Branch", "Worktree", "Push", "Pull" }
-local pick_mode
 local mode_actions = {
   ["Branch"] = function()
-    pick_from("Branch", branch_submenu_order, branch_submenu_actions, pick_mode)
+    menu_stack.push(pick_mode)
+    open_branch_submenu()
   end,
   ["Worktree"] = function()
-    pick_from("Worktree", worktree_submenu_order, worktree_submenu_actions, pick_mode)
+    menu_stack.push(pick_mode)
+    open_worktree_submenu()
   end,
   ["Push"] = push_current,
   ["Pull"] = pull_current,
 }
 
 pick_mode = function()
+  menu_stack.reset()
   pick_from("Git", mode_order, mode_actions)
 end
 
 M.setup = function()
+  link_worktree_hl()
+  vim.api.nvim_create_autocmd("ColorScheme", {
+    desc = "Re-derive git branch/worktree picker highlight for the new colorscheme",
+    callback = link_worktree_hl,
+  })
+
   vim.keymap.set("n", "<M-b>", pick_mode, { desc = "Git branch/worktree menu" })
 
   vim.keymap.set("n", "<M-b>b", function()
+    menu_stack.reset()
     open_picker("branch")
   end, { desc = "Switch/create git branch" })
 
   vim.keymap.set("n", "<M-b>w", function()
+    menu_stack.reset()
     open_picker("worktree")
   end, { desc = "Switch/create git worktree" })
 
