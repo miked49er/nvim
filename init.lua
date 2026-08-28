@@ -22,6 +22,7 @@ vim.keymap.set("n", "<M-j>", "<cmd>cnext<CR>")
 vim.keymap.set("n", "<M-k>", "<cmd>cprev<CR>")
 
 vim.keymap.set("n", "-", "<cmd>Oil<CR>", { desc = "Oil File Explorer" })
+vim.keymap.set("n", "<leader>t", "<cmd>tabnew<CR>", { desc = "New tab" })
 
 vim.api.nvim_create_autocmd("TextYankPost", {
   desc = "Highlight when yanking (copying) text",
