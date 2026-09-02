@@ -5,6 +5,7 @@ return {
     config = function()
       local statusline = require 'mini.statusline'
       local worktree = require 'config.worktree'
+      local git_busy = require 'config.git_busy'
 
       -- Solid-background look, one group per palette slot so the statusline
       -- indicator matches whatever color the tabline assigned that
@@ -43,9 +44,15 @@ return {
         return '%f%m%r'
       end
 
+      local function busy_section()
+        local label = git_busy.label()
+        return label and ('⏳ ' .. label) or ''
+      end
+
       local function active_content()
         local mode, mode_hl = statusline.section_mode { trunc_width = 120 }
         local worktree, worktree_hl = worktree_section()
+        local busy           = busy_section()
         local git           = statusline.section_git { trunc_width = 40 }
         local diff          = statusline.section_diff { trunc_width = 75 }
         local diagnostics   = statusline.section_diagnostics { trunc_width = 75 }
@@ -58,6 +65,7 @@ return {
         return statusline.combine_groups {
           { hl = mode_hl,                    strings = { mode } },
           { hl = worktree_hl,                 strings = { worktree } },
+          { hl = 'MiniStatuslineDevinfo',     strings = { busy } },
           { hl = 'MiniStatuslineDevinfo',     strings = { git, diff, diagnostics, lsp } },
           '%<',
           { hl = 'MiniStatuslineFilename',    strings = { filename } },

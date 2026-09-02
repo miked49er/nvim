@@ -263,10 +263,15 @@ return {
         vim.lsp.enable("sourcekit")
       end
 
+      -- Off by default (session-only, via <leader>ih below) rather than
+      -- always-on: constantly rendered hints turned out to be more
+      -- annoying than useful day-to-day.
+      local inlay_hints_enabled = false
+
       -- Inlay hints can crash with "Invalid 'col': out of range" when an
       -- extmark is redrawn against a line that's being actively edited
       -- (stale hint positions vs. new line length), so keep them off
-      -- during insert mode.
+      -- during insert mode regardless of the toggle state.
       vim.api.nvim_create_autocmd("InsertEnter", {
         group = vim.api.nvim_create_augroup("my.lsp.inlay_hint", {}),
         callback = function(ev)
@@ -276,16 +281,22 @@ return {
       vim.api.nvim_create_autocmd("InsertLeave", {
         group = "my.lsp.inlay_hint",
         callback = function(ev)
-          vim.lsp.inlay_hint.enable(true, { bufnr = ev.buf })
+          vim.lsp.inlay_hint.enable(inlay_hints_enabled, { bufnr = ev.buf })
         end,
       })
+
+      vim.keymap.set("n", "<leader>ih", function()
+        inlay_hints_enabled = not inlay_hints_enabled
+        vim.lsp.inlay_hint.enable(inlay_hints_enabled)
+        vim.notify("Inlay hints " .. (inlay_hints_enabled and "enabled" or "disabled"))
+      end, { desc = "Toggle LSP inlay hints" })
 
       vim.api.nvim_create_autocmd("LspAttach", {
         group = vim.api.nvim_create_augroup("my.lsp", {}),
         callback = function(ev)
           local client = assert(vim.lsp.get_client_by_id(ev.data.client_id))
 
-          if client:supports_method("textDocument/inlayHint") then
+          if inlay_hints_enabled and client:supports_method("textDocument/inlayHint") then
             vim.lsp.inlay_hint.enable(true, { bufnr = ev.buf })
           end
 
@@ -372,7 +383,7 @@ return {
             end,
             timeout_ms = 1000,
           })
-          vim.lsp.inlay_hint.enable(true, { bufnr = bufnr })
+          vim.lsp.inlay_hint.enable(inlay_hints_enabled, { bufnr = bufnr })
         end, 200)
       end, { desc = "Organize imports" })
     end,
