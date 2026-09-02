@@ -177,6 +177,19 @@ return {
           result.diagnostics = vim.tbl_filter(function(d)
             return not (d.code == 6133 and d.message == "'React' is declared but its value is never read.")
           end, result.diagnostics)
+
+          -- checkJs is enabled below (via implicitProjectConfig) purely so
+          -- vtsls's missing-import quickfix works in plain JS files, but we
+          -- don't want the type errors that come with it: eslint is the
+          -- linting source of truth for JS, so drop vtsls's diagnostics
+          -- entirely in .js/.jsx buffers. TS/TSX buffers keep them.
+          local client = vim.lsp.get_client_by_id(ctx.client_id)
+          if client and client.name == "vtsls" and result.uri then
+            local ft = vim.bo[vim.uri_to_bufnr(result.uri)].filetype
+            if ft == "javascript" or ft == "javascriptreact" then
+              result.diagnostics = {}
+            end
+          end
         end
         publish_diagnostics(err, result, ctx, config)
       end
@@ -210,7 +223,13 @@ return {
         capabilities = capabilities,
         settings = {
           typescript = ts_js_language_settings,
-          javascript = ts_js_language_settings,
+          -- checkJs so plain JS projects (no tsconfig/jsconfig) still get
+          -- the "cannot find name" diagnostic that the missing-import
+          -- quickfix depends on. The resulting type-error noise is dropped
+          -- for .js/.jsx buffers in the publishDiagnostics wrapper above.
+          javascript = vim.tbl_deep_extend("force", {}, ts_js_language_settings, {
+            implicitProjectConfig = { checkJs = true },
+          }),
         },
       })
 
