@@ -4,6 +4,7 @@ return {
     dependencies = {
       "nvim-lua/plenary.nvim",
       { "nvim-telescope/telescope-fzf-native.nvim", build = "make" },
+      "nvim-telescope/telescope-ui-select.nvim",
     },
     config = function()
       require("telescope").setup({
@@ -26,10 +27,14 @@ return {
           fzf = {
             case_mode = "ignore_case",
           },
+          ["ui-select"] = {
+            require("telescope.themes").get_cursor({}),
+          },
         },
       })
 
       require("telescope").load_extension("fzf")
+      require("telescope").load_extension("ui-select")
 
       local builtin = require("telescope.builtin")
       vim.keymap.set("n", "<leader>fh", builtin.help_tags)
