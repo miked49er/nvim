@@ -32,12 +32,21 @@ LSP client has no such client extension, so it errors trying to run it.
   → the existing eslint-format defer step. `source.addMissingImports.ts` is a
   *source* action (not diagnostic-gated), the same pattern LazyVim uses for
   its own "add missing imports" keymap, so it works regardless of the
-  diagnostic-store suppression below. It runs *after* organizeImports
-  deliberately: organizeImports strips imports it considers unused (e.g.
-  `import React from 'react'` in a file that still needs it in scope for the
-  classic JSX transform), and addMissingImports afterward re-adds anything
-  genuinely still required — this is self-correcting rather than special-
-  casing which imports organizeImports shouldn't touch.
+  diagnostic-store suppression below.
+- `addMissingImports` turned out **not** to be self-correcting for the React
+  case: `"'React' must be in scope when using JSX"` is an ESLint rule
+  (`react/react-in-jsx-scope`), not a TypeScript diagnostic. Under this
+  project's JSX transform setting, TypeScript's own compiler genuinely does
+  not consider `React` missing, so `organizeImports` strips it as unused and
+  `addMissingImports` has nothing to re-add — it only restores imports *TS*
+  considers missing, and TS and this project's ESLint config disagree here.
+  The `<M-o>` handler now snapshots the `import React from "react"` line (if
+  present) before running `organizeImports`, and restores it verbatim if it
+  got stripped, before the `addMissingImports` step runs. This is a
+  deliberate special-case (not project-config-aware), scoped to this one
+  import, accepted because the project's ESLint config still requires the
+  classic transform while the nvim config's existing TS6133 filter assumes
+  the modern one — a real mismatch, not a bug in either tool.
 - `_typescript.didOrganizeImports` (and the sibling `_typescript.*` client
   commands vtsls attaches to other actions, e.g. `_typescript.applyRefactoring`)
   are stubbed as no-op client commands, since VSCode's own source confirms

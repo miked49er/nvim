@@ -383,23 +383,51 @@ return {
         -- buffer outside of insert mode, so guard it here too.
         vim.lsp.inlay_hint.enable(false, { bufnr = bufnr })
 
-        -- Chain: organize/sort/dedupe imports first, then add back any
+        -- organizeImports treats `import React from "react"` as unused
+        -- under the automatic JSX transform, but some projects still need
+        -- it in scope for the classic transform (their eslint config
+        -- enforces react/react-in-jsx-scope, a lint rule TypeScript's own
+        -- diagnostics know nothing about, so source.addMissingImports.ts
+        -- can't restore it — it only re-adds imports TS itself considers
+        -- missing). Snapshot the import line so it can be restored
+        -- verbatim (same quote style, semicolon) if organizeImports strips
+        -- it. See ADR-0002.
+        local react_import_pattern = "^import%s+React%s+from%s+['\"]react['\"];?%s*$"
+        local react_import_line
+        for _, line in ipairs(vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)) do
+          if line:match(react_import_pattern) then
+            react_import_line = line
+            break
+          end
+        end
+
+        -- Chain: organize/sort/dedupe imports first, then restore the
+        -- React import if it got stripped, then add back any other
         -- missing imports (a source action, so it works regardless of
-        -- whether the diagnostic-gated quickfix would have fired — see
-        -- ADR-0002), then let eslint reformat it. Doing addMissingImports
-        -- *after* organizeImports matters: organizeImports strips imports
-        -- it considers unused (e.g. `import React from 'react'` in a file
-        -- that still needs it in scope for the classic JSX transform), and
-        -- running addMissingImports afterward re-adds anything genuinely
-        -- still required instead of us having to special-case which
-        -- imports organizeImports shouldn't touch. Each step edits the
-        -- buffer, so they're staggered with defer_fn rather than fired
-        -- concurrently.
+        -- whether the diagnostic-gated quickfix would have fired), then
+        -- let eslint reformat it. Each step edits the buffer, so they're
+        -- staggered with defer_fn rather than fired concurrently.
         vim.lsp.buf.code_action({
           apply = true,
           context = { only = { "source.organizeImports" }, diagnostics = {} },
         })
         vim.defer_fn(function()
+          if react_import_line then
+            local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+            local still_present, insert_at = false, 0
+            for i, line in ipairs(lines) do
+              if line:match(react_import_pattern) then
+                still_present = true
+                break
+              elseif insert_at == 0 and line:match("^import%s") then
+                insert_at = i - 1
+              end
+            end
+            if not still_present then
+              vim.api.nvim_buf_set_lines(bufnr, insert_at, insert_at, false, { react_import_line })
+            end
+          end
+
           vim.lsp.buf.code_action({
             apply = true,
             context = { only = { "source.addMissingImports.ts" }, diagnostics = {} },
