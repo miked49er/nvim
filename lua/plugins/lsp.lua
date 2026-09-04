@@ -383,20 +383,26 @@ return {
         -- buffer outside of insert mode, so guard it here too.
         vim.lsp.inlay_hint.enable(false, { bufnr = bufnr })
 
-        -- Chain: add any missing imports first (a source action, so it
-        -- works regardless of whether the diagnostic-gated quickfix would
-        -- have fired — see ADR-0002), then organize/sort/dedupe the
-        -- resulting import block, then let eslint reformat it. Each step
-        -- edits the buffer, so they're staggered with defer_fn rather than
-        -- fired concurrently.
+        -- Chain: organize/sort/dedupe imports first, then add back any
+        -- missing imports (a source action, so it works regardless of
+        -- whether the diagnostic-gated quickfix would have fired — see
+        -- ADR-0002), then let eslint reformat it. Doing addMissingImports
+        -- *after* organizeImports matters: organizeImports strips imports
+        -- it considers unused (e.g. `import React from 'react'` in a file
+        -- that still needs it in scope for the classic JSX transform), and
+        -- running addMissingImports afterward re-adds anything genuinely
+        -- still required instead of us having to special-case which
+        -- imports organizeImports shouldn't touch. Each step edits the
+        -- buffer, so they're staggered with defer_fn rather than fired
+        -- concurrently.
         vim.lsp.buf.code_action({
           apply = true,
-          context = { only = { "source.addMissingImports.ts" }, diagnostics = {} },
+          context = { only = { "source.organizeImports" }, diagnostics = {} },
         })
         vim.defer_fn(function()
           vim.lsp.buf.code_action({
             apply = true,
-            context = { only = { "source.organizeImports" }, diagnostics = {} },
+            context = { only = { "source.addMissingImports.ts" }, diagnostics = {} },
           })
           vim.defer_fn(function()
             -- vtsls's own import formatting defaults to 4 spaces; let eslint

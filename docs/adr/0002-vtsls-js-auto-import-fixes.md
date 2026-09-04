@@ -28,11 +28,16 @@ LSP client has no such client extension, so it errors trying to run it.
 
 ## Decision
 
-- `<M-o>` now chains `source.addMissingImports.ts` → `source.organizeImports`
+- `<M-o>` now chains `source.organizeImports` → `source.addMissingImports.ts`
   → the existing eslint-format defer step. `source.addMissingImports.ts` is a
   *source* action (not diagnostic-gated), the same pattern LazyVim uses for
   its own "add missing imports" keymap, so it works regardless of the
-  diagnostic-store suppression below.
+  diagnostic-store suppression below. It runs *after* organizeImports
+  deliberately: organizeImports strips imports it considers unused (e.g.
+  `import React from 'react'` in a file that still needs it in scope for the
+  classic JSX transform), and addMissingImports afterward re-adds anything
+  genuinely still required — this is self-correcting rather than special-
+  casing which imports organizeImports shouldn't touch.
 - `_typescript.didOrganizeImports` (and the sibling `_typescript.*` client
   commands vtsls attaches to other actions, e.g. `_typescript.applyRefactoring`)
   are stubbed as no-op client commands, since VSCode's own source confirms
