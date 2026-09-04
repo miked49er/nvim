@@ -35,6 +35,30 @@ return {
         return worktree.ICON .. ' ' .. name, worktree_hl_group(worktree.slot_for(name))
       end
 
+      -- Branch requires a file read (unlike the worktree label's plain
+      -- string match), so it's cached per-cwd and only refreshed when the
+      -- cwd changes or focus returns to nvim (catches branch switches made
+      -- in another terminal without spawning git to poll for them).
+      vim.api.nvim_set_hl(0, 'MiniStatuslineBranch', { fg = 'MediumSpringGreen', bold = true })
+      local branch_cache = {}
+      local function refresh_branch_cache()
+        branch_cache = {}
+      end
+      vim.api.nvim_create_autocmd({ 'DirChanged', 'FocusGained' }, {
+        desc = 'Invalidate cached statusline branch name',
+        callback = refresh_branch_cache,
+      })
+
+      local function branch_section()
+        local cwd = vim.fn.getcwd(0)
+        local name = branch_cache[cwd]
+        if name == nil then
+          name = worktree.branch_for_cwd(cwd) or false
+          branch_cache[cwd] = name
+        end
+        return name and (' ' .. name) or ''
+      end
+
       -- Always relative to cwd (tab's repo/worktree root, via `tcd`) instead
       -- of mini.statusline's default of full path when window isn't truncated.
       local function filename_section()
@@ -52,6 +76,7 @@ return {
       local function active_content()
         local mode, mode_hl = statusline.section_mode { trunc_width = 120 }
         local worktree, worktree_hl = worktree_section()
+        local branch         = branch_section()
         local busy           = busy_section()
         local git           = statusline.section_git { trunc_width = 40 }
         local diff          = statusline.section_diff { trunc_width = 75 }
@@ -65,6 +90,7 @@ return {
         return statusline.combine_groups {
           { hl = mode_hl,                    strings = { mode } },
           { hl = worktree_hl,                 strings = { worktree } },
+          { hl = 'MiniStatuslineBranch',       strings = { branch } },
           { hl = 'MiniStatuslineDevinfo',     strings = { busy } },
           { hl = 'MiniStatuslineDevinfo',     strings = { git, diff, diagnostics, lsp } },
           '%<',

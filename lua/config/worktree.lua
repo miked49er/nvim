@@ -66,4 +66,52 @@ function M.fg_for_bg(hex)
   return luminance(hex) > 0.6 and 'black' or 'white'
 end
 
+-- Reads a HEAD file's content and resolves it to a display name: a symbolic
+-- ref becomes its branch name, anything else (detached HEAD) becomes a short
+-- SHA. No git process spawn — just a small file read.
+local function branch_from_head_file(path)
+  local file = io.open(path, 'r')
+  if not file then
+    return nil
+  end
+  local content = file:read('*l')
+  file:close()
+  if not content then
+    return nil
+  end
+  local branch = content:match('^ref: refs/heads/(.+)$')
+  if branch then
+    return branch
+  end
+  return content:sub(1, 7)
+end
+
+-- Resolves the current branch/SHA for `cwd` without spawning git. `.git` is
+-- either a repo's own directory (main worktree) or, for a linked worktree, a
+-- file containing "gitdir: <path>/.git/worktrees/<name>" — in both cases the
+-- actual HEAD file to read lives directly inside that gitdir.
+function M.branch_for_cwd(cwd)
+  local dot_git = vim.fs.joinpath(cwd, '.git')
+  local stat = vim.uv.fs_stat(dot_git)
+  if not stat then
+    return nil
+  end
+
+  local gitdir = dot_git
+  if stat.type == 'file' then
+    local file = io.open(dot_git, 'r')
+    if not file then
+      return nil
+    end
+    local content = file:read('*l')
+    file:close()
+    gitdir = content and content:match('^gitdir: (.+)$')
+    if not gitdir then
+      return nil
+    end
+  end
+
+  return branch_from_head_file(vim.fs.joinpath(gitdir, 'HEAD'))
+end
+
 return M

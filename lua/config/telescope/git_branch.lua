@@ -127,7 +127,9 @@ local function list_local_branches()
 end
 
 -- Stable partition: branches with a worktree checked out first, preserving
--- list_branches()'s existing relative order within each group.
+-- list_branches()'s existing relative order within each group. Only matters
+-- for the picker's initial, empty-prompt display — see worktree_priority_sorter
+-- for how this priority is preserved once the user starts typing.
 local function worktrees_first(entries, worktree_map)
   local with_wt, without_wt = {}, {}
   for _, entry in ipairs(entries) do
@@ -139,6 +141,45 @@ local function worktrees_first(entries, worktree_map)
   end
   vim.list_extend(with_wt, without_wt)
   return with_wt
+end
+
+-- Wraps the stock fuzzy sorter so entries with a worktree checked out always
+-- outrank entries without one, at any fuzzy-match quality, as long as both
+-- still match the query. Telescope's generic_sorter re-scores every entry
+-- against the prompt from scratch, which otherwise discards worktrees_first's
+-- ordering the moment there's a query.
+local function worktree_priority_sorter(worktree_map)
+  local inner = conf.generic_sorter({})
+  -- inner may be a stateful sorter (e.g. telescope-fzf-native, which caches
+  -- a per-prompt parsed pattern and a native "slab" on self.state), so its
+  -- init/start/destroy lifecycle has to be forwarded, not just scoring_function.
+  return require("telescope.sorters").new({
+    discard = inner.discard,
+    init = function()
+      inner:_init()
+    end,
+    start = function(_, prompt)
+      inner:_start(prompt)
+    end,
+    finish = function(_, prompt)
+      inner:_finish(prompt)
+    end,
+    destroy = function()
+      inner:_destroy()
+    end,
+    scoring_function = function(_, prompt, line, entry)
+      local score = inner:scoring_function(prompt, line, entry)
+      if score == -1 then
+        return -1
+      end
+      if worktree_map[entry.value.name] then
+        return score
+      end
+      -- Offset guarantees any non-worktree score sorts below (worse than)
+      -- every worktree score, regardless of fuzzy quality on either side.
+      return score + 1e6
+    end,
+  })
 end
 
 local function sanitize_worktree_name(branch)
@@ -668,6 +709,12 @@ local function open_picker(mode)
           entry_maker = function(entry)
             local made = branch_entry_maker(entry)
             local wt_path = worktree_map[entry.name]
+            if wt_path then
+              local wt_name = vim.fs.basename(wt_path)
+              if wt_name ~= entry.name then
+                made.display = wt_name .. ":" .. made.display
+              end
+            end
             if mode == "worktree" and wt_path then
               made.display = made.display .. "  (" .. wt_path .. ")"
             end
@@ -680,7 +727,7 @@ local function open_picker(mode)
             return made
           end,
         }),
-        sorter = conf.generic_sorter({}),
+        sorter = worktree_priority_sorter(worktree_map),
         attach_mappings = function(prompt_bufnr, map)
           actions.select_default:replace(function()
             local selection = action_state.get_selected_entry()
