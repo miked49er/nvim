@@ -180,14 +180,19 @@ return {
 
           -- checkJs is enabled below (via implicitProjectConfig) purely so
           -- vtsls's missing-import quickfix works in plain JS files, but we
-          -- don't want the type errors that come with it: eslint is the
-          -- linting source of truth for JS, so drop vtsls's diagnostics
-          -- entirely in .js/.jsx buffers. TS/TSX buffers keep them.
+          -- don't want the type-error noise that comes with it: eslint is
+          -- the linting source of truth for JS. Diagnostics are kept in the
+          -- store (dropping them entirely would empty `context.diagnostics`
+          -- for diagnostic-gated code actions like the missing-import
+          -- quickfix, see ADR-0002) but never displayed for .js/.jsx
+          -- buffers. TS/TSX buffers keep both the data and the display.
           local client = vim.lsp.get_client_by_id(ctx.client_id)
           if client and client.name == "vtsls" and result.uri then
-            local ft = vim.bo[vim.uri_to_bufnr(result.uri)].filetype
+            local bufnr = vim.uri_to_bufnr(result.uri)
+            local ft = vim.bo[bufnr].filetype
             if ft == "javascript" or ft == "javascriptreact" then
-              result.diagnostics = {}
+              local ns = vim.lsp.diagnostic.get_namespace(ctx.client_id)
+              vim.diagnostic.enable(false, { bufnr = bufnr, ns_id = ns })
             end
           end
         end
@@ -232,6 +237,14 @@ return {
           }),
         },
       })
+
+      -- vtsls attaches VSCode-only "client extension" commands to some code
+      -- actions (e.g. organizeImports, some refactors); in VSCode's own
+      -- source these do nothing but log telemetry, so stub them client-side
+      -- rather than let Neovim's LSP client error with "does not support
+      -- command" trying to send them to the server. See ADR-0002.
+      vim.lsp.commands["_typescript.didOrganizeImports"] = function() end
+      vim.lsp.commands["_typescript.applyRefactoring"] = function() end
 
       -- eslint owns formatting (source.fixAll.eslint) for JS/TS instead of
       -- vtsls's built-in formatter, since these projects use eslint, not
@@ -369,23 +382,36 @@ return {
         -- redrawn against a buffer mid-edit; organizeImports edits the
         -- buffer outside of insert mode, so guard it here too.
         vim.lsp.inlay_hint.enable(false, { bufnr = bufnr })
+
+        -- Chain: add any missing imports first (a source action, so it
+        -- works regardless of whether the diagnostic-gated quickfix would
+        -- have fired — see ADR-0002), then organize/sort/dedupe the
+        -- resulting import block, then let eslint reformat it. Each step
+        -- edits the buffer, so they're staggered with defer_fn rather than
+        -- fired concurrently.
         vim.lsp.buf.code_action({
           apply = true,
-          context = { only = { "source.organizeImports" }, diagnostics = {} },
+          context = { only = { "source.addMissingImports.ts" }, diagnostics = {} },
         })
         vim.defer_fn(function()
-          -- vtsls's own import formatting defaults to 4 spaces; let eslint
-          -- (the project's formatting source of truth) fix it up.
-          vim.lsp.buf.format({
-            bufnr = bufnr,
-            filter = function(client)
-              return client.name ~= "vtsls"
-            end,
-            timeout_ms = 1000,
+          vim.lsp.buf.code_action({
+            apply = true,
+            context = { only = { "source.organizeImports" }, diagnostics = {} },
           })
-          vim.lsp.inlay_hint.enable(inlay_hints_enabled, { bufnr = bufnr })
+          vim.defer_fn(function()
+            -- vtsls's own import formatting defaults to 4 spaces; let eslint
+            -- (the project's formatting source of truth) fix it up.
+            vim.lsp.buf.format({
+              bufnr = bufnr,
+              filter = function(client)
+                return client.name ~= "vtsls"
+              end,
+              timeout_ms = 1000,
+            })
+            vim.lsp.inlay_hint.enable(inlay_hints_enabled, { bufnr = bufnr })
+          end, 200)
         end, 200)
-      end, { desc = "Organize imports" })
+      end, { desc = "Add missing imports and organize" })
     end,
   },
 }
