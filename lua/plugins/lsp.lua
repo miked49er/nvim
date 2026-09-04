@@ -228,13 +228,17 @@ return {
         capabilities = capabilities,
         settings = {
           typescript = ts_js_language_settings,
+          javascript = ts_js_language_settings,
           -- checkJs so plain JS projects (no tsconfig/jsconfig) still get
           -- the "cannot find name" diagnostic that the missing-import
           -- quickfix depends on. The resulting type-error noise is dropped
           -- for .js/.jsx buffers in the publishDiagnostics wrapper above.
-          javascript = vim.tbl_deep_extend("force", {}, ts_js_language_settings, {
+          -- vtsls reads this from a flat, non-language-split "js/ts.*" key
+          -- (see configuration.schema.json), NOT "javascript.*"/"typescript.*"
+          -- like vscode's own TS extension -- see ADR-0003.
+          ["js/ts"] = {
             implicitProjectConfig = { checkJs = true },
-          }),
+          },
         },
       })
 
@@ -376,8 +380,39 @@ return {
         toggle_import_fold(vim.api.nvim_get_current_buf())
       end, { desc = "Toggle imports fold" })
 
+      -- Runs a single source code action (organizeImports/addMissingImports
+      -- are not diagnostic-gated) and calls on_done once its edit (and any
+      -- attached command, e.g. vtsls's telemetry no-ops) has actually been
+      -- applied, rather than guessing with a timer. See ADR-0003.
+      local function run_source_code_action(client, bufnr, kind, on_done)
+        local params = vim.lsp.util.make_range_params(0, client.offset_encoding)
+        params.context = { only = { kind }, diagnostics = {} }
+        client:request("textDocument/codeAction", params, function(err, actions)
+          local action = not err and actions and actions[1]
+          if not action then
+            on_done()
+            return
+          end
+          if action.edit then
+            vim.lsp.util.apply_workspace_edit(action.edit, client.offset_encoding)
+          end
+          local a_cmd = action.command
+          if a_cmd then
+            local command = type(a_cmd) == "table" and a_cmd or action
+            client:exec_cmd(command, { bufnr = bufnr }, on_done)
+          else
+            on_done()
+          end
+        end, bufnr)
+      end
+
       vim.keymap.set({ "n" }, "<M-o>", function()
         local bufnr = vim.api.nvim_get_current_buf()
+        local client = vim.lsp.get_clients({ bufnr = bufnr, name = "vtsls" })[1]
+        if not client then
+          return
+        end
+
         -- Inlay hints can crash (see InsertEnter/InsertLeave above) when
         -- redrawn against a buffer mid-edit; organizeImports edits the
         -- buffer outside of insert mode, so guard it here too.
@@ -405,13 +440,10 @@ return {
         -- React import if it got stripped, then add back any other
         -- missing imports (a source action, so it works regardless of
         -- whether the diagnostic-gated quickfix would have fired), then
-        -- let eslint reformat it. Each step edits the buffer, so they're
-        -- staggered with defer_fn rather than fired concurrently.
-        vim.lsp.buf.code_action({
-          apply = true,
-          context = { only = { "source.organizeImports" }, diagnostics = {} },
-        })
-        vim.defer_fn(function()
+        -- let eslint reformat it. Each step only starts once the previous
+        -- edit is confirmed applied (see run_source_code_action) instead of
+        -- being staggered with defer_fn timers.
+        run_source_code_action(client, bufnr, "source.organizeImports", function()
           if react_import_line then
             local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
             local still_present, insert_at = false, 0
@@ -428,23 +460,19 @@ return {
             end
           end
 
-          vim.lsp.buf.code_action({
-            apply = true,
-            context = { only = { "source.addMissingImports.ts" }, diagnostics = {} },
-          })
-          vim.defer_fn(function()
+          run_source_code_action(client, bufnr, "source.addMissingImports.ts", function()
             -- vtsls's own import formatting defaults to 4 spaces; let eslint
             -- (the project's formatting source of truth) fix it up.
             vim.lsp.buf.format({
               bufnr = bufnr,
-              filter = function(client)
-                return client.name ~= "vtsls"
+              filter = function(c)
+                return c.name ~= "vtsls"
               end,
               timeout_ms = 1000,
             })
             vim.lsp.inlay_hint.enable(inlay_hints_enabled, { bufnr = bufnr })
-          end, 200)
-        end, 200)
+          end)
+        end)
       end, { desc = "Add missing imports and organize" })
     end,
   },

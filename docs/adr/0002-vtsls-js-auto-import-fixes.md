@@ -2,7 +2,12 @@
 
 ## Status
 
-Accepted
+Superseded by [ADR-0003](0003-vtsls-checkjs-key-and-sequencing-fix.md), which
+corrects this ADR's Context section (the `checkJs` setting described here as
+enabling the missing-import quickfix was silently no-op due to a wrong
+settings key) and replaces the `<M-o>` `defer_fn` timing with proper request
+sequencing. The command-stub and diagnostic-display-suppression decisions
+below are unaffected and still stand.
 
 ## Context
 
