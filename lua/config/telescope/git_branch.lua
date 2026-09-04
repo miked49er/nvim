@@ -713,6 +713,7 @@ local function open_picker(mode)
               local wt_name = vim.fs.basename(wt_path)
               if wt_name ~= entry.name then
                 made.display = wt_name .. ":" .. made.display
+                made.ordinal = wt_name .. " " .. made.ordinal
               end
             end
             if mode == "worktree" and wt_path then
