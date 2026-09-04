@@ -12,7 +12,6 @@ return {
           find_files = {
             theme = "ivy",
             hidden = true,
-            no_ignore = true,
             file_ignore_patterns = {
               "%.claude[\\/]worktrees[\\/]",
               "%.git[\\/]",
