@@ -53,7 +53,7 @@ end
 
 -- Nerd Font terminal glyph (nf-fa-terminal, U+F120), colored to match this
 -- worktree's tabline icon so the two stay visually linked.
-local ICON = string.char(0xEE, 0x84, 0xA0)
+local ICON = string.char(0xEF, 0x84, 0xA0)
 
 local function set_winbar(win, key)
   local slot = worktree.slot_for(key)
