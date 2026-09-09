@@ -10,16 +10,22 @@ local themes = require("telescope.themes")
 local menu_stack = require("config.telescope.menu_stack")
 local worktree = require("config.worktree")
 local git_busy = require("config.git_busy")
+local branch_cache = require("config.branch_cache")
 
 local M = {}
 
 local WORKTREE_ICON = worktree.ICON
 local WORKTREE_HL = "GitBranchWorktree"
 
+-- Every call here might have moved HEAD (switch/checkout/rename/etc.), so the
+-- statusline's cached branch name is invalidated unconditionally rather than
+-- threading a "did this change HEAD" check through every call site.
 local function git(args)
   local cmd = { "git" }
   vim.list_extend(cmd, args)
-  return vim.system(cmd, { text = true, cwd = vim.fn.getcwd() }):wait()
+  local result = vim.system(cmd, { text = true, cwd = vim.fn.getcwd() }):wait()
+  branch_cache.invalidate()
+  return result
 end
 
 -- Non-blocking counterpart to git(): on_done runs on the main loop (wrapped
@@ -30,6 +36,7 @@ local function git_async(args, on_done)
   vim.list_extend(cmd, args)
   vim.system(cmd, { text = true, cwd = vim.fn.getcwd() }, function(result)
     vim.schedule(function()
+      branch_cache.invalidate()
       on_done(result)
     end)
   end)
