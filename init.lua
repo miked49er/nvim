@@ -1,5 +1,6 @@
 require("config.lazy")
 require("config.terminal.term")
+require("config.terminal.persistent")
 require("config.tabline").setup()
 
 vim.opt.tabstop = 2
