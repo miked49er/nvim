@@ -165,19 +165,19 @@ vim.keymap.set({ "n", "t" }, "<M-\\>", function()
   M.toggle()
 end, { desc = "Toggle persistent worktree terminal" })
 
-vim.keymap.set({ "n", "t" }, "<M-\\>h", function()
+vim.keymap.set({ "n", "t" }, "<leader>\\h", function()
   M.toggle("left")
 end, { desc = "Mount persistent worktree terminal left" })
 
-vim.keymap.set({ "n", "t" }, "<M-\\>j", function()
+vim.keymap.set({ "n", "t" }, "<leader>\\j", function()
   M.toggle("bottom")
 end, { desc = "Mount persistent worktree terminal bottom" })
 
-vim.keymap.set({ "n", "t" }, "<M-\\>k", function()
+vim.keymap.set({ "n", "t" }, "<leader>\\k", function()
   M.toggle("top")
 end, { desc = "Mount persistent worktree terminal top" })
 
-vim.keymap.set({ "n", "t" }, "<M-\\>l", function()
+vim.keymap.set({ "n", "t" }, "<leader>\\l", function()
   M.toggle("right")
 end, { desc = "Mount persistent worktree terminal right" })
 
