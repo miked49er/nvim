@@ -1,13 +1,37 @@
 local worktree = require("config.worktree")
+local branch_cache = require("config.branch_cache")
 
 local M = {}
+
+local function get_empty_tab_name(cwd)
+  local wt = worktree.label_for_cwd(cwd)
+  if wt then
+    return wt
+  else
+    local branch = branch_cache.get(cwd)
+    return branch or "[No Name]"
+  end
+end
 
 local function tab_label(tabnr, hl)
   local buflist = vim.fn.tabpagebuflist(tabnr)
   local bufnr = buflist[vim.fn.tabpagewinnr(tabnr)]
 
-  local bufname = vim.fn.bufname(bufnr)
-  local name = bufname ~= "" and vim.fn.fnamemodify(bufname, ":t") or "[No Name]"
+  local buftype = vim.fn.getbufvar(bufnr, "&buftype")
+  local name
+
+  if buftype ~= "" then
+    local cwd = vim.fn.getcwd(-1, tabnr)
+    name = get_empty_tab_name(cwd)
+  else
+    local bufname = vim.fn.bufname(bufnr)
+    if bufname ~= "" then
+      name = vim.fn.fnamemodify(bufname, ":t")
+    else
+      local cwd = vim.fn.getcwd(-1, tabnr)
+      name = get_empty_tab_name(cwd)
+    end
+  end
 
   local modified = ""
   for _, buf in ipairs(buflist) do
