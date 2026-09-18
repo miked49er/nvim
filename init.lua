@@ -13,6 +13,10 @@ vim.opt.relativenumber = true
 
 vim.diagnostic.config({
   virtual_text = true,
+  -- Without this, ]d/[d/vim.diagnostic.jump() also visit diagnostics from
+  -- namespaces disabled for display (e.g. vtsls diagnostics hidden on plain
+  -- JS buffers in lsp.lua), landing on lines with nothing visible on them.
+  jump = { enabled = true },
 })
 
 vim.keymap.set("n", "]d", function()
