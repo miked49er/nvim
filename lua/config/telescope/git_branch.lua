@@ -277,6 +277,29 @@ local function prompt_text(title, default, callback)
       :find()
 end
 
+-- Like prompt_text, but always calls back (with "" on empty input) instead
+-- of treating empty as cancel — for prompts where "nothing typed" is itself
+-- a valid choice (e.g. an optional stash message).
+local function prompt_text_optional(title, default, callback)
+  pickers
+      .new(themes.get_dropdown({}), {
+        prompt_title = title,
+        default_text = default or "",
+        finder = finders.new_table({ results = {} }),
+        sorter = conf.generic_sorter({}),
+        attach_mappings = function(prompt_bufnr, map)
+          actions.select_default:replace(function()
+            local input = vim.trim(action_state.get_current_line())
+            actions.close(prompt_bufnr)
+            callback(input)
+          end)
+          menu_stack.attach_back(map, prompt_bufnr)
+          return true
+        end,
+      })
+      :find()
+end
+
 -- Reuses the same branch listing as the switch/create picker, but only ever
 -- resolves to a ref string: selecting an entry uses its name, typing text
 -- uses that text verbatim, and accepting empty input falls back to HEAD.
@@ -683,6 +706,164 @@ local function pull_current()
   vim.notify("Pulled " .. current_head())
 end
 
+local function list_stashes()
+  local result = git({ "stash", "list" })
+  if result.code ~= 0 then
+    return {}
+  end
+  local entries = {}
+  for _, line in ipairs(vim.split(result.stdout or "", "\n", { trimempty = true })) do
+    local ref = line:match("^(stash@{%d+})")
+    if ref then
+      table.insert(entries, { ref = ref, raw = line })
+    end
+  end
+  return entries
+end
+
+local function stash_entry_maker(entry)
+  return { value = entry, display = entry.raw, ordinal = entry.raw }
+end
+
+local function stash_index(ref)
+  return tonumber(ref:match("{(%d+)}")) or 0
+end
+
+-- git status --porcelain, tracked + untracked; for renames, keeps the new
+-- path since that's what a pathspec needs to match.
+local function list_changed_files()
+  local result = git({ "status", "--porcelain" })
+  if result.code ~= 0 then
+    return {}
+  end
+  local entries = {}
+  for _, line in ipairs(vim.split(result.stdout or "", "\n", { trimempty = true })) do
+    local status = line:sub(1, 2)
+    local path = line:sub(4):match("%-> (.+)$") or line:sub(4)
+    table.insert(entries, { status = status, path = path })
+  end
+  return entries
+end
+
+local function file_entry_maker(entry)
+  local display = entry.status .. "  " .. entry.path
+  return { value = entry, display = display, ordinal = entry.path }
+end
+
+-- Shared by Pop/Apply: both can fail with merge-style conflicts, handled the
+-- same way as merge_branch_action.
+local function handle_stash_result(result, action_label, success_msg)
+  if result.code == 0 then
+    vim.notify(success_msg)
+    return
+  end
+  local unmerged = git_lines({ "diff", "--name-only", "--diff-filter=U" })
+  if #unmerged > 0 then
+    vim.notify(action_label .. " conflicts in " .. #unmerged .. " file(s); opening changes panel", vim.log.levels.WARN)
+    require("diffbandit").commit_panel()
+    return
+  end
+  notify_err(action_label .. " failed", result)
+end
+
+local function stash_push_all()
+  prompt_text_optional("Stash message (optional)", "", function(message)
+    local args = { "stash", "push" }
+    if message ~= "" then
+      vim.list_extend(args, { "-m", message })
+    end
+    local result = git(args)
+    if result.code ~= 0 then
+      notify_err("git stash push failed", result)
+      return
+    end
+    if (result.stdout or ""):find("No local changes to save", 1, true) then
+      vim.notify("No local changes to stash")
+      return
+    end
+    vim.notify("Stashed changes")
+  end)
+end
+
+local function stash_push_selected()
+  local open_files
+  open_files = function()
+    pick_entries_multi("Stash Files", list_changed_files(), file_entry_maker, function(selected)
+      menu_stack.push(open_files)
+      prompt_text_optional("Stash message (optional)", "", function(message)
+        local args = { "stash", "push", "-u" }
+        if message ~= "" then
+          vim.list_extend(args, { "-m", message })
+        end
+        table.insert(args, "--")
+        for _, entry in ipairs(selected) do
+          table.insert(args, entry.path)
+        end
+        local result = git(args)
+        if result.code ~= 0 then
+          notify_err("git stash push failed", result)
+          return
+        end
+        vim.notify("Stashed " .. #selected .. " file(s)")
+      end)
+    end)
+  end
+  open_files()
+end
+
+local function stash_pop_action()
+  handle_stash_result(git({ "stash", "pop" }), "git stash pop", "Popped stash")
+end
+
+local function stash_apply_action()
+  pick_entry("Apply Stash", list_stashes(), stash_entry_maker, function(entry)
+    handle_stash_result(git({ "stash", "apply", entry.ref }), "git stash apply", "Applied " .. entry.ref)
+  end)
+end
+
+local function stash_drop_action()
+  local open_list
+  open_list = function()
+    pick_entries_multi("Drop Stash", list_stashes(), stash_entry_maker, function(selected)
+      if #selected == 1 then
+        local entry = selected[1]
+        confirm_picker("Drop " .. entry.raw .. "?", function()
+          local result = git({ "stash", "drop", entry.ref })
+          if result.code ~= 0 then
+            notify_err("git stash drop failed", result)
+            return
+          end
+          vim.notify("Dropped " .. entry.ref)
+        end)
+        return
+      end
+
+      -- Drop highest index first: dropping an older stash never renumbers
+      -- newer ones, but dropping a newer one shifts every older index down.
+      table.sort(selected, function(a, b)
+        return stash_index(a.ref) > stash_index(b.ref)
+      end)
+      local refs = {}
+      for _, entry in ipairs(selected) do
+        table.insert(refs, entry.ref)
+      end
+      confirm_picker("Drop " .. #selected .. " stashes: " .. table.concat(refs, ", ") .. "?", function()
+        local failed = {}
+        for _, entry in ipairs(selected) do
+          local result = git({ "stash", "drop", entry.ref })
+          if result.code ~= 0 then
+            table.insert(failed, entry.ref)
+          end
+        end
+        if #failed > 0 then
+          vim.notify("Failed to drop: " .. table.concat(failed, ", "), vim.log.levels.WARN)
+        end
+      end)
+    end)
+  end
+  open_list()
+end
+
 local function handle_existing(mode, entry)
   if mode == "branch" then
     if entry.is_local then
@@ -775,7 +956,7 @@ local function link_worktree_hl()
   vim.api.nvim_set_hl(0, WORKTREE_HL, worktree.HL)
 end
 
-local open_branch_submenu, open_worktree_submenu, pick_mode
+local open_branch_submenu, open_worktree_submenu, open_stash_submenu, pick_mode
 
 local branch_submenu_order = { "Switch/Create", "Delete", "Rename", "Merge" }
 local branch_submenu_actions = {
@@ -817,7 +998,35 @@ open_worktree_submenu = function()
   pick_from("Worktree", worktree_submenu_order, worktree_submenu_actions)
 end
 
-local mode_order = { "Branch", "Worktree", "Push", "Pull" }
+local stash_submenu_order = { "Push", "Push (Select Files)", "Pop", "Apply", "Drop" }
+local stash_submenu_actions = {
+  ["Push"] = function()
+    menu_stack.push(open_stash_submenu)
+    stash_push_all()
+  end,
+  ["Push (Select Files)"] = function()
+    menu_stack.push(open_stash_submenu)
+    stash_push_selected()
+  end,
+  ["Pop"] = function()
+    menu_stack.push(open_stash_submenu)
+    stash_pop_action()
+  end,
+  ["Apply"] = function()
+    menu_stack.push(open_stash_submenu)
+    stash_apply_action()
+  end,
+  ["Drop"] = function()
+    menu_stack.push(open_stash_submenu)
+    stash_drop_action()
+  end,
+}
+
+open_stash_submenu = function()
+  pick_from("Stash", stash_submenu_order, stash_submenu_actions)
+end
+
+local mode_order = { "Branch", "Worktree", "Stash", "Push", "Pull" }
 local mode_actions = {
   ["Branch"] = function()
     menu_stack.push(pick_mode)
@@ -826,6 +1035,10 @@ local mode_actions = {
   ["Worktree"] = function()
     menu_stack.push(pick_mode)
     open_worktree_submenu()
+  end,
+  ["Stash"] = function()
+    menu_stack.push(pick_mode)
+    open_stash_submenu()
   end,
   ["Push"] = push_current,
   ["Pull"] = pull_current,
