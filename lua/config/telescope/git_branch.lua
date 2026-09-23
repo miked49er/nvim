@@ -473,94 +473,111 @@ local function tabnr_for_cwd(path)
   return nil
 end
 
--- Async: on_done(result) runs whether or not the delete succeeded; success
--- notification fires here since every caller wants it.
-local function delete_branch_async(entry, on_done)
-  git_async({ "branch", "-d", entry.name }, function(result)
-    if result.code == 0 then
-      vim.notify("Deleted branch " .. entry.name)
-    end
-    on_done(result)
-  end)
-end
-
-local function delete_branch_action()
-  local open_list
-  open_list = function()
-    pick_entries_multi("Delete Branch", list_local_branches(), branch_entry_maker, function(selected)
-      -- Single selection keeps the interactive force-delete prompt. Batch
-      -- delete skips per-item prompts and reports which ones need a manual
-      -- force-delete, same as the worktree removal flow.
-      if #selected == 1 then
-        local entry = selected[1]
-        confirm_picker("Delete branch " .. entry.name .. "?", function()
-          git_busy.start("deleting " .. entry.name)
-          delete_branch_async(entry, function(result)
-            git_busy.stop()
-            if result.code == 0 then
-              return
-            end
-            notify_err("git branch -d failed", result)
-            confirm_picker(entry.name .. " is not fully merged. Force delete?", function()
-              git_busy.start("deleting " .. entry.name)
-              git_async({ "branch", "-D", entry.name }, function(force_result)
-                git_busy.stop()
-                if force_result.code ~= 0 then
-                  notify_err("git branch -D failed", force_result)
-                  return
-                end
-                vim.notify("Deleted branch " .. entry.name)
-              end)
-            end)
-          end)
-        end)
-        return
-      end
-
-      local names = {}
-      for _, entry in ipairs(selected) do
-        table.insert(names, entry.name)
-      end
-      confirm_picker("Delete " .. #selected .. " branches: " .. table.concat(names, ", ") .. "?", function()
-        local failed = {}
-        local remaining = #selected
-        git_busy.start("deleting " .. #selected .. " branches")
-        for _, entry in ipairs(selected) do
-          delete_branch_async(entry, function(result)
-            if result.code ~= 0 then
-              table.insert(failed, entry.name)
-            end
-            remaining = remaining - 1
-            if remaining == 0 then
-              git_busy.stop()
-              if #failed > 0 then
-                vim.notify(
-                  "Not fully merged, delete individually to force: " .. table.concat(failed, ", "),
-                  vim.log.levels.WARN
-                )
-              end
-            end
-          end)
-        end
-      end)
-    end)
+local function finish_worktree_removal(wt)
+  vim.notify("Removed worktree " .. wt.path)
+  local tabnr = tabnr_for_cwd(wt.path)
+  if tabnr and #vim.api.nvim_list_tabpages() > 1 then
+    vim.cmd(tabnr .. "tabclose")
   end
-  open_list()
 end
 
 -- Async: on_done(result) runs whether or not the removal succeeded; success
 -- notification + tab cleanup fire here since every caller wants them.
-local function remove_worktree_async(wt, on_done)
-  git_async({ "worktree", "remove", wt.path }, function(result)
+local function remove_worktree_async(wt, on_done, force)
+  local args = { "worktree", "remove" }
+  if force then
+    table.insert(args, "--force")
+  end
+  table.insert(args, wt.path)
+  git_async(args, function(result)
     if result.code == 0 then
-      vim.notify("Removed worktree " .. wt.path)
-      local tabnr = tabnr_for_cwd(wt.path)
-      if tabnr and #vim.api.nvim_list_tabpages() > 1 then
-        vim.cmd(tabnr .. "tabclose")
-      end
+      finish_worktree_removal(wt)
     end
     on_done(result)
   end)
+end
+
+-- Async: on_done(summary) gets e.g. "Podfile.lock, a.txt, b.txt +4 more"
+-- (untracked files included, since they block a plain remove too).
+local function worktree_changes_summary_async(wt, on_done)
+  git_async({ "-C", wt.path, "status", "--porcelain" }, function(result)
+    local names = {}
+    for _, line in ipairs(vim.split(result.stdout or "", "\n", { trimempty = true })) do
+      local path = line:sub(4):gsub("^.* %-> ", ""):gsub('^"(.*)"$', "%1")
+      table.insert(names, vim.fs.basename(path))
+    end
+    local max = 3
+    local summary = table.concat(vim.list_slice(names, 1, max), ", ")
+    if #names > max then
+      summary = summary .. " +" .. (#names - max) .. " more"
+    end
+    on_done(summary)
+  end)
+end
+
+local function confirm_force_remove(wt, on_done)
+  worktree_changes_summary_async(wt, function(summary)
+    local detail = summary ~= "" and (" (" .. summary .. ")") or ""
+    confirm_picker(wt.path .. " has changes" .. detail .. ". Force remove?", function()
+      git_busy.start("removing worktree")
+      remove_worktree_async(wt, function(result)
+        git_busy.stop()
+        if result.code ~= 0 then
+          notify_err("git worktree remove failed", result)
+        end
+        if on_done then
+          on_done()
+        end
+      end, true)
+    end)
+  end)
+end
+
+-- Follow-up for a batch removal's dirty worktrees: one prompt to force them
+-- all, review them one at a time, or leave them.
+local function resolve_dirty_worktrees(dirty)
+  local summaries = {}
+  local pending = #dirty
+  for i, wt in ipairs(dirty) do
+    worktree_changes_summary_async(wt, function(summary)
+      summaries[i] = vim.fs.basename(wt.path) .. (summary ~= "" and (" (" .. summary .. ")") or "")
+      pending = pending - 1
+      if pending > 0 then
+        return
+      end
+      local force_all = "Force remove all"
+      local one_by_one = "Review one by one"
+      local skip = "Skip"
+      vim.ui.select({ force_all, one_by_one, skip }, {
+        prompt = #dirty .. " worktrees have changes: " .. table.concat(summaries, "; "),
+      }, function(choice)
+        if choice == force_all then
+          git_busy.start("removing " .. #dirty .. " worktrees")
+          local remaining = #dirty
+          for _, w in ipairs(dirty) do
+            remove_worktree_async(w, function(result)
+              if result.code ~= 0 then
+                notify_err("git worktree remove failed", result)
+              end
+              remaining = remaining - 1
+              if remaining == 0 then
+                git_busy.stop()
+              end
+            end, true)
+          end
+        elseif choice == one_by_one then
+          local idx = 0
+          local function next_one()
+            idx = idx + 1
+            if dirty[idx] then
+              confirm_force_remove(dirty[idx], next_one)
+            end
+          end
+          next_one()
+        end
+      end)
+    end)
+  end
 end
 
 local function remove_worktree_action()
@@ -574,12 +591,11 @@ local function remove_worktree_action()
       local name = vim.fs.basename(wt.path)
       return { value = wt, display = name, ordinal = name }
     end, function(selected)
-      -- Single selection keeps the interactive force-remove prompt, but only
+      -- Single selection offers the interactive force-remove prompt, but only
       -- for the "has uncommitted changes" failure: a locked worktree is
       -- usually locked on purpose, so that failure is reported and left
-      -- alone rather than offered a force-retry. Batch removal skips
-      -- per-item confirm prompts (stacking one per failure would be a mess)
-      -- and just reports what still needs handling.
+      -- alone rather than offered a force-retry. Batch removal removes the
+      -- clean ones first, then offers one follow-up prompt for the dirty ones.
       if #selected == 1 then
         local wt = selected[1]
         confirm_picker("Remove worktree at " .. wt.path .. "?", function()
@@ -593,21 +609,7 @@ local function remove_worktree_action()
             if is_locked_failure(result) then
               return
             end
-            confirm_picker(wt.path .. " has changes. Force remove?", function()
-              git_busy.start("removing worktree")
-              git_async({ "worktree", "remove", "--force", wt.path }, function(force_result)
-                git_busy.stop()
-                if force_result.code ~= 0 then
-                  notify_err("git worktree remove failed", force_result)
-                  return
-                end
-                vim.notify("Removed worktree " .. wt.path)
-                local tabnr = tabnr_for_cwd(wt.path)
-                if tabnr and #vim.api.nvim_list_tabpages() > 1 then
-                  vim.cmd(tabnr .. "tabclose")
-                end
-              end)
-            end)
+            confirm_force_remove(wt)
           end)
         end)
         return
@@ -627,17 +629,14 @@ local function remove_worktree_action()
               if is_locked_failure(result) then
                 notify_err("git worktree remove failed", result)
               else
-                table.insert(dirty, vim.fs.basename(wt.path))
+                table.insert(dirty, wt)
               end
             end
             remaining = remaining - 1
             if remaining == 0 then
               git_busy.stop()
               if #dirty > 0 then
-                vim.notify(
-                  "Has changes, remove individually to force: " .. table.concat(dirty, ", "),
-                  vim.log.levels.WARN
-                )
+                resolve_dirty_worktrees(dirty)
               end
             end
           end)
