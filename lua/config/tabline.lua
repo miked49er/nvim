@@ -53,6 +53,15 @@ local function tab_label(tabnr, hl)
 end
 
 function M.render()
+  local open_worktrees = {}
+  for tabnr = 1, vim.fn.tabpagenr("$") do
+    local wt = worktree.label_for_cwd(vim.fn.getcwd(-1, tabnr))
+    if wt then
+      open_worktrees[wt] = true
+    end
+  end
+  worktree.reconcile_open(open_worktrees)
+
   local current = vim.fn.tabpagenr()
   local parts = {}
   for tabnr = 1, vim.fn.tabpagenr("$") do

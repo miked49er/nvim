@@ -37,19 +37,43 @@ function M.color_for_slot(slot)
 end
 
 local assigned = {}
-local next_slot = 1
 
--- Order-of-opening assignment: the first worktree name seen (by tabline or
--- statusline, whichever renders first) claims slot 1, the next claims slot
--- 2, etc., for the life of the session. Wraps past PALETTE_SIZE — two
--- worktrees could then share a color, but more than 6 concurrent worktree
--- tabs isn't a realistic session, so that collision is left unhandled.
+-- Lowest-unused-slot assignment: a worktree claims the smallest palette slot
+-- no other currently-tracked worktree holds, and keeps it until reconciled
+-- away (see M.reconcile_open). Unlike a monotonic counter, this lets slots
+-- freed by closed worktrees be reused instead of cycling forever toward a
+-- collision — two worktrees only ever share a color if more than
+-- PALETTE_SIZE are tracked at once, which reconcile_open prevents as long as
+-- tabline.render() calls it with the actual open set.
 function M.slot_for(name)
-  if not assigned[name] then
-    assigned[name] = next_slot
-    next_slot = (next_slot % M.PALETTE_SIZE) + 1
+  if assigned[name] then
+    return assigned[name]
   end
-  return assigned[name]
+
+  local used = {}
+  for _, slot in pairs(assigned) do
+    used[slot] = true
+  end
+
+  local slot = 1
+  while used[slot] and slot < M.PALETTE_SIZE do
+    slot = slot + 1
+  end
+
+  assigned[name] = slot
+  return slot
+end
+
+-- Drops tracked worktrees that are no longer open, freeing their slot for
+-- reuse. `open_names` is a set (name -> true) of worktree names currently
+-- backing a tab. Called from tabline.render(), which already enumerates
+-- every open tab, so this stays in sync without a dedicated close event.
+function M.reconcile_open(open_names)
+  for name in pairs(assigned) do
+    if not open_names[name] then
+      assigned[name] = nil
+    end
+  end
 end
 
 -- Relative luminance of a "#rrggbb" hex color, used to pick legible
