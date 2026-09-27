@@ -497,6 +497,16 @@ local function remove_worktree_async(wt, on_done, force)
   end)
 end
 
+-- e.g. names {"Podfile.lock", "a.txt", "b.txt", "c.txt"} -> "Podfile.lock, a.txt, b.txt +1 more"
+local function summarize_names(names)
+  local max = 3
+  local summary = table.concat(vim.list_slice(names, 1, max), ", ")
+  if #names > max then
+    summary = summary .. " +" .. (#names - max) .. " more"
+  end
+  return summary
+end
+
 -- Async: on_done(summary) gets e.g. "Podfile.lock, a.txt, b.txt +4 more"
 -- (untracked files included, since they block a plain remove too).
 local function worktree_changes_summary_async(wt, on_done)
@@ -506,12 +516,7 @@ local function worktree_changes_summary_async(wt, on_done)
       local path = line:sub(4):gsub("^.* %-> ", ""):gsub('^"(.*)"$', "%1")
       table.insert(names, vim.fs.basename(path))
     end
-    local max = 3
-    local summary = table.concat(vim.list_slice(names, 1, max), ", ")
-    if #names > max then
-      summary = summary .. " +" .. (#names - max) .. " more"
-    end
-    on_done(summary)
+    on_done(summarize_names(names))
   end)
 end
 
@@ -647,6 +652,268 @@ local function remove_worktree_action()
   open_list()
 end
 
+-- Folders under .claude/worktrees/ that `git worktree list` no longer knows
+-- about: left behind when Remove Worktree's `git worktree remove` deleted
+-- the worktree's admin entry but couldn't clear the folder itself (typically
+-- a Windows file lock). {path = ...}, matching the shape pick_entries_multi's
+-- entry_maker expects.
+local function list_orphan_worktree_folders()
+  local root = repo_root()
+  if not root then
+    return {}
+  end
+  local base = vim.fs.joinpath(root, ".claude", "worktrees")
+  if vim.fn.isdirectory(base) == 0 then
+    return {}
+  end
+  local active = {}
+  for _, wt in ipairs(list_worktrees_ordered()) do
+    active[vim.fs.normalize(wt.path)] = true
+  end
+  local orphans = {}
+  for name, kind in vim.fs.dir(base) do
+    if kind == "directory" then
+      local path = vim.fs.joinpath(base, name)
+      if not active[vim.fs.normalize(path)] then
+        table.insert(orphans, { path = path })
+      end
+    end
+  end
+  return orphans
+end
+
+-- Async: on_done(is_dirty, summary). "Dirty" means `git status` inside the
+-- folder reports changes, or the command couldn't run at all -- e.g. the
+-- worktree admin entry behind this folder's .git file is already gone, so
+-- there's no git state to say the folder is safe to drop silently. In that
+-- fallback case the summary lists the folder's top-level files instead.
+local function orphan_dirty_summary_async(path, on_done)
+  git_async({ "-C", path, "status", "--porcelain" }, function(result)
+    if result.code ~= 0 then
+      local names = {}
+      local ok, iter = pcall(vim.fs.dir, path)
+      if ok then
+        for name, kind in iter do
+          if kind ~= "directory" then
+            table.insert(names, name)
+          end
+        end
+      end
+      on_done(true, summarize_names(names))
+      return
+    end
+    local names = {}
+    for _, line in ipairs(vim.split(result.stdout or "", "\n", { trimempty = true })) do
+      local file_path = line:sub(4):gsub("^.* %-> ", ""):gsub('^"(.*)"$', "%1")
+      table.insert(names, vim.fs.basename(file_path))
+    end
+    on_done(#names > 0, summarize_names(names))
+  end)
+end
+
+local function remove_orphan_folder(path)
+  return vim.fn.delete(path, "rf") == 0
+end
+
+-- Follow-up for a batch prune's dirty folders: one prompt to force them all,
+-- review them one at a time, or leave them -- mirrors resolve_dirty_worktrees.
+local function resolve_dirty_orphans(dirty)
+  local summaries = {}
+  for _, o in ipairs(dirty) do
+    table.insert(summaries, vim.fs.basename(o.path) .. (o.summary ~= "" and (" (" .. o.summary .. ")") or ""))
+  end
+  local force_all = "Force remove all"
+  local one_by_one = "Review one by one"
+  local skip = "Skip"
+  vim.ui.select({ force_all, one_by_one, skip }, {
+    prompt = #dirty .. " folder(s) have changes: " .. table.concat(summaries, "; "),
+  }, function(choice)
+    if choice == force_all then
+      for _, o in ipairs(dirty) do
+        if not remove_orphan_folder(o.path) then
+          vim.notify("Failed to remove " .. o.path, vim.log.levels.ERROR)
+        end
+      end
+    elseif choice == one_by_one then
+      local idx = 0
+      local function next_one()
+        idx = idx + 1
+        local o = dirty[idx]
+        if not o then
+          return
+        end
+        local detail = o.summary ~= "" and (" (" .. o.summary .. ")") or ""
+        confirm_picker(o.path .. " has changes" .. detail .. ". Force remove?", function()
+          if not remove_orphan_folder(o.path) then
+            vim.notify("Failed to remove " .. o.path, vim.log.levels.ERROR)
+          end
+          next_one()
+        end)
+      end
+      next_one()
+    end
+  end)
+end
+
+local function prune_worktree_folders_action()
+  local orphans = list_orphan_worktree_folders()
+  if #orphans == 0 then
+    vim.notify("No orphaned worktree folders")
+    return
+  end
+
+  pickers
+      .new(themes.get_dropdown({}), {
+        prompt_title = "Prune Worktree Folders (<Tab> to toggle)",
+        finder = finders.new_table({
+          results = orphans,
+          entry_maker = function(o)
+            local name = vim.fs.basename(o.path)
+            return { value = o, display = name, ordinal = name }
+          end,
+        }),
+        sorter = conf.generic_sorter({}),
+        on_complete = {
+          function(picker)
+            actions.select_all(picker.prompt_bufnr)
+          end,
+        },
+        attach_mappings = function(prompt_bufnr, map)
+          map({ "i", "n" }, "<Tab>", actions.toggle_selection + actions.move_selection_worse)
+          actions.select_default:replace(function()
+            local picker = action_state.get_current_picker(prompt_bufnr)
+            local multi = picker:get_multi_selection()
+            actions.close(prompt_bufnr)
+            local selected = {}
+            if #multi > 0 then
+              for _, entry in ipairs(multi) do
+                table.insert(selected, entry.value)
+              end
+            else
+              local selection = action_state.get_selected_entry()
+              if selection then
+                table.insert(selected, selection.value)
+              end
+            end
+            if #selected == 0 then
+              return
+            end
+
+            local names = {}
+            for _, o in ipairs(selected) do
+              table.insert(names, vim.fs.basename(o.path))
+            end
+            confirm_picker("Prune " .. #selected .. " worktree folder(s): " .. table.concat(names, ", ") .. "?", function()
+              local dirty = {}
+              local remaining = #selected
+              for _, o in ipairs(selected) do
+                orphan_dirty_summary_async(o.path, function(is_dirty, summary)
+                  if is_dirty then
+                    table.insert(dirty, { path = o.path, summary = summary })
+                  elseif not remove_orphan_folder(o.path) then
+                    vim.notify("Failed to remove " .. o.path, vim.log.levels.ERROR)
+                  end
+                  remaining = remaining - 1
+                  if remaining == 0 and #dirty > 0 then
+                    resolve_dirty_orphans(dirty)
+                  end
+                end)
+              end
+            end)
+          end)
+          menu_stack.attach_back(map, prompt_bufnr)
+          return true
+        end,
+      })
+      :find()
+end
+
+-- Local-only cleanup: never touches the remote. If the deleted branch left a
+-- stale remote-tracking ref behind (origin/<name>), drop that too, so it
+-- doesn't linger in the picker as a "[remote]" entry.
+local function prune_stale_remote_ref(name)
+  if git({ "rev-parse", "--verify", "--quiet", "refs/remotes/origin/" .. name }).code == 0 then
+    git({ "branch", "-dr", "origin/" .. name })
+  end
+end
+
+-- Async: on_done(result) runs whether or not the delete succeeded; success
+-- notification fires here since every caller wants it.
+local function delete_branch_async(entry, on_done)
+  git_async({ "branch", "-d", entry.name }, function(result)
+    if result.code == 0 then
+      vim.notify("Deleted branch " .. entry.name)
+      prune_stale_remote_ref(entry.name)
+    end
+    on_done(result)
+  end)
+end
+
+local function delete_branch_action()
+  local open_list
+  open_list = function()
+    pick_entries_multi("Delete Branch", list_local_branches(), branch_entry_maker, function(selected)
+      -- Single selection keeps the interactive force-delete prompt. Batch
+      -- delete skips per-item prompts and reports which ones need a manual
+      -- force-delete, same as the worktree removal flow.
+      if #selected == 1 then
+        local entry = selected[1]
+        confirm_picker("Delete branch " .. entry.name .. "?", function()
+          git_busy.start("deleting " .. entry.name)
+          delete_branch_async(entry, function(result)
+            git_busy.stop()
+            if result.code == 0 then
+              return
+            end
+            notify_err("git branch -d failed", result)
+            confirm_picker(entry.name .. " is not fully merged. Force delete?", function()
+              git_busy.start("deleting " .. entry.name)
+              git_async({ "branch", "-D", entry.name }, function(force_result)
+                git_busy.stop()
+                if force_result.code ~= 0 then
+                  notify_err("git branch -D failed", force_result)
+                  return
+                end
+                vim.notify("Deleted branch " .. entry.name)
+                prune_stale_remote_ref(entry.name)
+              end)
+            end)
+          end)
+        end)
+        return
+      end
+
+      local names = {}
+      for _, entry in ipairs(selected) do
+        table.insert(names, entry.name)
+      end
+      confirm_picker("Delete " .. #selected .. " branches: " .. table.concat(names, ", ") .. "?", function()
+        local failed = {}
+        local remaining = #selected
+        git_busy.start("deleting " .. #selected .. " branches")
+        for _, entry in ipairs(selected) do
+          delete_branch_async(entry, function(result)
+            if result.code ~= 0 then
+              table.insert(failed, entry.name)
+            end
+            remaining = remaining - 1
+            if remaining == 0 then
+              git_busy.stop()
+              if #failed > 0 then
+                vim.notify(
+                  "Not fully merged, delete individually to force: " .. table.concat(failed, ", "),
+                  vim.log.levels.WARN
+                )
+              end
+            end
+          end)
+        end
+      end)
+    end)
+  end
+  open_list()
+end
+
 local function rename_branch_action()
   local open_list
   open_list = function()
@@ -684,10 +951,15 @@ local function merge_branch_action()
   end)
 end
 
+-- A plain `git push` only works when the upstream's own branch name matches
+-- the local one. A branch created from a remote base (e.g. `origin/main`)
+-- tracks that ref under its original name, so pushing a same-named local
+-- branch to it is rejected. Treat that mismatch the same as "no upstream".
 local function push_current()
   local branch = current_head()
-  local has_upstream = git({ "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}" }).code == 0
-  local args = has_upstream and { "push" } or { "push", "-u", "origin", branch }
+  local upstream = git_lines({ "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}" })[1]
+  local upstream_branch = upstream and upstream:match("^[^/]+/(.+)$")
+  local args = (upstream_branch == branch) and { "push" } or { "push", "-u", "origin", branch }
   local result = git(args)
   if result.code ~= 0 then
     notify_err("git push failed", result)
@@ -981,7 +1253,7 @@ open_branch_submenu = function()
   pick_from("Branch", branch_submenu_order, branch_submenu_actions)
 end
 
-local worktree_submenu_order = { "Switch/Create", "Remove" }
+local worktree_submenu_order = { "Switch/Create", "Remove", "Prune" }
 local worktree_submenu_actions = {
   ["Switch/Create"] = function()
     menu_stack.push(open_worktree_submenu)
@@ -990,6 +1262,10 @@ local worktree_submenu_actions = {
   ["Remove"] = function()
     menu_stack.push(open_worktree_submenu)
     remove_worktree_action()
+  end,
+  ["Prune"] = function()
+    menu_stack.push(open_worktree_submenu)
+    prune_worktree_folders_action()
   end,
 }
 
