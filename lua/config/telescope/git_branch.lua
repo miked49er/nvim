@@ -803,23 +803,24 @@ local function prune_worktree_folders_action()
             for _, o in ipairs(selected) do
               table.insert(names, vim.fs.basename(o.path))
             end
-            confirm_picker("Prune " .. #selected .. " worktree folder(s): " .. table.concat(names, ", ") .. "?", function()
-              local dirty = {}
-              local remaining = #selected
-              for _, o in ipairs(selected) do
-                orphan_dirty_summary_async(o.path, function(is_dirty, summary)
-                  if is_dirty then
-                    table.insert(dirty, { path = o.path, summary = summary })
-                  elseif not remove_orphan_folder(o.path) then
-                    vim.notify("Failed to remove " .. o.path, vim.log.levels.ERROR)
-                  end
-                  remaining = remaining - 1
-                  if remaining == 0 and #dirty > 0 then
-                    resolve_dirty_orphans(dirty)
-                  end
-                end)
-              end
-            end)
+            confirm_picker("Prune " .. #selected .. " worktree folder(s): " .. table.concat(names, ", ") .. "?",
+              function()
+                local dirty = {}
+                local remaining = #selected
+                for _, o in ipairs(selected) do
+                  orphan_dirty_summary_async(o.path, function(is_dirty, summary)
+                    if is_dirty then
+                      table.insert(dirty, { path = o.path, summary = summary })
+                    elseif not remove_orphan_folder(o.path) then
+                      vim.notify("Failed to remove " .. o.path, vim.log.levels.ERROR)
+                    end
+                    remaining = remaining - 1
+                    if remaining == 0 and #dirty > 0 then
+                      resolve_dirty_orphans(dirty)
+                    end
+                  end)
+                end
+              end)
           end)
           menu_stack.attach_back(map, prompt_bufnr)
           return true
@@ -1333,18 +1334,18 @@ M.setup = function()
 
   vim.keymap.set("n", "<M-b>", pick_mode, { desc = "Git branch/worktree menu" })
 
-  vim.keymap.set("n", "<M-b>b", function()
+  vim.keymap.set("n", "<leader>bb", function()
     menu_stack.reset()
     open_picker("branch")
   end, { desc = "Switch/create git branch" })
 
-  vim.keymap.set("n", "<M-b>w", function()
+  vim.keymap.set("n", "<leader>bw", function()
     menu_stack.reset()
     open_picker("worktree")
   end, { desc = "Switch/create git worktree" })
 
-  vim.keymap.set("n", "<M-b>p", pull_current, { desc = "Git pull" })
-  vim.keymap.set("n", "<M-b>P", push_current, { desc = "Git push" })
+  vim.keymap.set("n", "<leader>bp", pull_current, { desc = "Git pull" })
+  vim.keymap.set("n", "<leader>bP", push_current, { desc = "Git push" })
 end
 
 return M
