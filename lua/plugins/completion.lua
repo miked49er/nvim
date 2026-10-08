@@ -44,6 +44,16 @@ return {
       fuzzy = { implementation = "prefer_rust_with_warning" },
 
       signature = { enabled = true },
+
+      sources = {
+        providers = {
+          cmdline = {
+            -- getcompletion() throws E220 on shell commands with an unmatched `{` (e.g. `:!echo {`).
+            -- Fixed upstream only on blink v2; drop this once on v2.
+            enabled = function() return not vim.fn.getcmdline():find("!.*{") end,
+          },
+        },
+      },
     },
   },
 }
