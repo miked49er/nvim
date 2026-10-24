@@ -185,35 +185,6 @@ do
   check("skipped kept", exists(wts[2]))
 end
 
-print("removals run one at a time, never concurrently")
-do
-  local _, wts = scenario({ { "a" }, { "b" }, { "c", true } })
-  local inflight, max_inflight, finished = 0, 0, false
-  local orig = vim.ui.select
-  vim.ui.select = function(items, _, cb) return cb("Force remove all", 1) end
-  batch.run(wts, {
-    remove = function(wt, force, on_done)
-      inflight = inflight + 1
-      max_inflight = math.max(max_inflight, inflight)
-      local args = { "git", "worktree", "remove" }
-      if force then table.insert(args, "--force") end
-      table.insert(args, wt.path)
-      vim.system(args, { text = true }, function(r)
-        vim.schedule(function()
-          inflight = inflight - 1
-          on_done(r)
-        end)
-      end)
-    end,
-    done = function() finished = true end,
-  })
-  vim.wait(10000, function() return finished end, 20)
-  vim.ui.select = orig
-  check("finished", finished)
-  check("never more than one removal in flight", max_inflight == 1, tostring(max_inflight))
-  check("all removed", not exists(wts[1]) and not exists(wts[2]) and not exists(wts[3]))
-end
-
 print("locked dirty worktree is not offered force removal; failure is reported")
 do
   local _, wts = scenario({ { "a" }, { "b", true } })

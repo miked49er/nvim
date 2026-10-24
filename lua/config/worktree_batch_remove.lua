@@ -96,21 +96,19 @@ function M.run(selected, deps)
     if #plan == 0 then
       return finish()
     end
-    local idx = 0
-    local function next_removal()
-      idx = idx + 1
-      local item = plan[idx]
-      if not item then
-        return finish()
-      end
+    -- Removals run concurrently; finish once every one has reported back.
+    local remaining = #plan
+    for _, item in ipairs(plan) do
       deps.remove(item.wt, item.force, function(result)
         if result.code ~= 0 and deps.on_failure then
           deps.on_failure(item.wt, result)
         end
-        next_removal()
+        remaining = remaining - 1
+        if remaining == 0 then
+          finish()
+        end
       end)
     end
-    next_removal()
   end
 
   local function decide()
