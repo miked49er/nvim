@@ -1,4 +1,4 @@
--- Run with: nvim --headless -l tests/persistent_terminal_spec.lua
+-- Run with: nvim --clean --headless -l tests/persistent_terminal_spec.lua
 -- Exercises the real persistent-terminal module against a real (headless)
 -- Neovim instance, stubbing only the job-spawning boundary
 -- (config.terminal.shell) and vim.fn.jobstop, per
@@ -48,7 +48,7 @@ vim.fn.mkdir(fake_cwd, "p")
 vim.cmd("tcd " .. vim.fn.fnameescape(fake_cwd))
 
 local key = test.worktree_key(vim.fn.getcwd(-1, 0))
-check("worktree_key falls back to cwd outside a git repo", key == fake_cwd, key)
+check("worktree_key falls back to cwd outside a git repo", key == vim.fs.normalize(fake_cwd), key)
 
 -- 1. First toggle: no entry yet -> creates a split, spawns (stubbed) job.
 persistent.toggle()
@@ -121,7 +121,95 @@ check("post-kill toggle gets a fresh buffer", entry and entry.buf ~= first_buf)
 vim.api.nvim_exec_autocmds("VimLeavePre", {})
 check("VimLeavePre force-stops the remaining live job", #jobstop_calls == 2, tostring(#jobstop_calls))
 
+-- 8. Worktree-keyed identity (issue #5): the key is the worktree root, not
+-- the branch, so branch switches reuse the terminal and same-branch
+-- worktrees stay separate.
+local function write_head(root, head)
+  local f = assert(io.open(root .. "/.git/HEAD", "w"))
+  f:write(head .. "\n")
+  f:close()
+end
+local function make_worktree(name, head)
+  local root = vim.fn.tempname() .. "-" .. name
+  vim.fn.mkdir(root .. "/.git", "p")
+  write_head(root, head)
+  return root
+end
+
+local wt_a = make_worktree("a", "ref: refs/heads/main")
+local wt_b = make_worktree("b", "ref: refs/heads/main")
+local key_a1 = test.worktree_key(wt_a)
+check("same branch, different worktrees get different keys", key_a1 ~= test.worktree_key(wt_b))
+write_head(wt_a, "ref: refs/heads/feature")
+check("switching branches keeps the same key", test.worktree_key(wt_a) == key_a1)
+write_head(wt_a, "0123456789abcdef0123456789abcdef01234567")
+check("detached HEAD keeps the same key", test.worktree_key(wt_a) == key_a1)
+vim.fn.mkdir(wt_a .. "/sub/dir", "p")
+check("a subdirectory resolves to its worktree root key", test.worktree_key(wt_a .. "/sub/dir") == key_a1)
+check("display name is the branch/SHA, not the key", test.display_name(key_a1) == "0123456", test.display_name(key_a1))
+
+-- 9. Teardown on last-tab close.
+local function new_tab_in(root)
+  vim.cmd("tabnew")
+  vim.cmd("tcd " .. vim.fn.fnameescape(root))
+  return vim.api.nvim_get_current_tabpage()
+end
+
+jobstop_calls = {}
+local killed = {}
+test.hooks.kill_tree = function(job)
+  table.insert(killed, job)
+end
+
+local tab1 = new_tab_in(wt_b)
+local key_b = test.worktree_key(wt_b)
+persistent.toggle()
+local b_buf, b_job = test.state[key_b].buf, test.state[key_b].job
+local tab2 = new_tab_in(wt_b)
+
+vim.api.nvim_set_current_tabpage(tab2)
+vim.cmd("tabclose")
+vim.wait(100, function() return false end)
+check("closing a tab while another for the worktree remains keeps the terminal", test.state[key_b] ~= nil and vim.api.nvim_buf_is_valid(b_buf))
+check("...and does not kill any process", #killed == 0 and #jobstop_calls == 0)
+
+vim.api.nvim_set_current_tabpage(tab1)
+vim.cmd("tabclose")
+vim.wait(200, function() return test.state[key_b] == nil end)
+check("closing the last tab of a worktree removes its state", test.state[key_b] == nil)
+check("...kills the process tree of its job", killed[1] == b_job, tostring(killed[1]))
+check("...stops its job", jobstop_calls[1] == b_job, tostring(jobstop_calls[1]))
+vim.wait(200, function() return not vim.api.nvim_buf_is_valid(b_buf) end)
+check("...and wipes its buffer", not vim.api.nvim_buf_is_valid(b_buf))
+
+-- Terminal visible in a tab that closes while a sibling tab remains: it is
+-- hidden, not killed.
+local tab3 = new_tab_in(wt_b)
+persistent.toggle()
+local e3buf = test.state[key_b].buf
+local tab4 = new_tab_in(wt_b)
+killed, jobstop_calls = {}, {}
+vim.api.nvim_set_current_tabpage(tab3)
+vim.cmd("tabclose")
+vim.wait(100, function() return false end)
+check("closing a tab showing the terminal while a sibling remains keeps it alive", test.state[key_b] ~= nil and vim.api.nvim_buf_is_valid(e3buf) and #killed == 0)
+vim.api.nvim_set_current_tabpage(tab4)
+vim.cmd("tabclose")
+vim.wait(200, function() return test.state[key_b] == nil end)
+check("...then closing the final tab tears it down", test.state[key_b] == nil and #killed == 1)
+
+-- 10. Real process tree: the default kill_tree ends a long-running child.
+local is_windows = vim.uv.os_uname().sysname == "Windows_NT"
+local real_hooks_kill = test.real_kill_tree
+local cmd = is_windows and { "cmd", "/c", "ping -n 1000 127.0.0.1 >nul" } or { "sh", "-c", "sleep 1000; true" }
 vim.fn.jobstop = real_jobstop
+local job = vim.fn.jobstart(cmd)
+local pid = vim.fn.jobpid(job)
+vim.wait(500, function() return false end)
+real_hooks_kill(job)
+vim.wait(1000, function() return vim.uv.kill(pid, 0) ~= 0 end)
+check("real process tree is gone after kill_tree", vim.uv.kill(pid, 0) ~= 0)
+pcall(vim.fn.jobstop, job)
 
 print("")
 if #failures > 0 then
