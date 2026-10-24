@@ -2,14 +2,10 @@ return {
   'nvim-treesitter/nvim-treesitter',
   lazy = false,
   build = ':TSUpdate',
-  opts = {
-    highlight = { enable = true },
-  },
   config = function(_, opts)
     local config = require('nvim-treesitter')
     config.setup(opts)
-    vim.bo.indentexpr = "v:lua.require'nvim-treesitter'.indentexpr()"
-    config.install {
+    local languages = {
       'css',
       'dockerfile',
       'lua',
@@ -36,5 +32,7 @@ return {
       'yaml',
       'zsh'
     }
+    config.install(languages)
+    require('config.treesitter').setup(languages)
   end
 }
