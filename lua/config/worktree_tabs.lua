@@ -2,8 +2,8 @@ local M = {}
 
 -- Tabpage handles (nvim_list_tabpages) differ from tab numbers once any tab
 -- has been closed; getcwd(-1, n) and :tabclose need numbers, so resolve them
--- per tab, tolerating tabs that vanish mid-iteration.
-local function tab_cwd(tabpage)
+-- per tab, tolerating tabs that vanish mid-iteration (returns nil).
+function M.tab_cwd(tabpage)
   if not vim.api.nvim_tabpage_is_valid(tabpage) then
     return nil
   end
@@ -19,7 +19,7 @@ function M.close_for_cwd(path)
   local normalized = vim.fs.normalize(path)
   local matches = {}
   for _, tabpage in ipairs(vim.api.nvim_list_tabpages()) do
-    if tab_cwd(tabpage) == normalized then
+    if M.tab_cwd(tabpage) == normalized then
       table.insert(matches, tabpage)
     end
   end

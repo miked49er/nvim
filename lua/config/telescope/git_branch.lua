@@ -12,6 +12,7 @@ local worktree = require("config.worktree")
 local git_busy = require("config.git_busy")
 local branch_cache = require("config.branch_cache")
 local git_base_sync = require("config.git_base_sync")
+local batch_remove = require("config.worktree_batch_remove")
 
 local M = {}
 
@@ -486,20 +487,10 @@ local function remove_worktree_async(wt, on_done, force)
   end)
 end
 
--- e.g. names {"Podfile.lock", "a.txt", "b.txt", "c.txt"} -> "Podfile.lock, a.txt, b.txt +1 more"
-local function summarize_names(names)
-  local max = 3
-  local summary = table.concat(vim.list_slice(names, 1, max), ", ")
-  if #names > max then
-    summary = summary .. " +" .. (#names - max) .. " more"
-  end
-  return summary
-end
-
 -- Scrollable list of a dirty worktree's changes (status code + full relative
 -- path from `git status --porcelain`) with a diff/file previewer.
 -- <CR> confirms the force removal; <C-s> skips (only when opts.allow_skip);
--- <Esc>/<C-c> cancels. on_result("force" | "skip" | nil for cancel) runs once.
+-- <Esc>/<C-c> cancels. on_result(RESULT.FORCE | RESULT.SKIP | nil for cancel) runs once.
 local function changes_confirm_picker(wt, entries, opts, on_result)
   opts = opts or {}
   local previewers = require("telescope.previewers")
@@ -533,26 +524,37 @@ local function changes_confirm_picker(wt, entries, opts, on_result)
           define_preview = function(self, entry)
             local e = entry.value
             local lines
-            if e.status == "??" then
+            if e.status == batch_remove.UNTRACKED then
               local ok, content = pcall(vim.fn.readfile, entry.path)
               lines = ok and content or { "(unreadable or directory)" }
             else
-              local r = vim.system({ "git", "-C", wt.path, "diff", "HEAD", "--", e.path }, { text = true }):wait()
-              lines = vim.split(r.stdout or "", "\n")
+              -- Async so scrolling the list never blocks on git.
+              local bufnr = self.state.bufnr
+              vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, { "(loading diff...)" })
+              vim.system({ "git", "-C", wt.path, "diff", "HEAD", "--", e.path }, { text = true }, function(r)
+                vim.schedule(function()
+                  if not vim.api.nvim_buf_is_valid(bufnr) then
+                    return
+                  end
+                  vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, vim.split(r.stdout or "", "\n"))
+                  vim.bo[bufnr].filetype = "diff"
+                end)
+              end)
+              return
             end
             vim.api.nvim_buf_set_lines(self.state.bufnr, 0, -1, false, lines)
-            vim.bo[self.state.bufnr].filetype = e.status == "??" and "" or "diff"
+            vim.bo[self.state.bufnr].filetype = ""
           end,
         }),
         attach_mappings = function(prompt_bufnr, map)
           actions.select_default:replace(function()
             actions.close(prompt_bufnr)
-            resolve("force")
+            resolve(batch_remove.RESULT.FORCE)
           end)
           if opts.allow_skip then
             map({ "i", "n" }, "<C-s>", function()
               actions.close(prompt_bufnr)
-              resolve("skip")
+              resolve(batch_remove.RESULT.SKIP)
             end)
           end
           map({ "i", "n" }, "<Esc>", function()
@@ -570,7 +572,7 @@ local function changes_confirm_picker(wt, entries, opts, on_result)
 end
 
 local function confirm_force_remove(wt, on_done)
-  require("config.worktree_batch_remove").changes_summary_async(wt, function(entries)
+  batch_remove.changes_summary_async(wt, function(entries)
     local function force_remove()
       git_busy.start("removing worktree")
       remove_worktree_async(wt, function(result)
@@ -587,7 +589,7 @@ local function confirm_force_remove(wt, on_done)
       return confirm_picker(wt.path .. " has no listed changes. Force remove?", force_remove)
     end
     changes_confirm_picker(wt, entries, { allow_skip = false }, function(result)
-      if result == "force" then
+      if result == batch_remove.RESULT.FORCE then
         force_remove()
       end
     end)
@@ -637,7 +639,7 @@ local function remove_worktree_action()
         -- Decisions first, removals second: nothing is removed until every
         -- dirty-worktree prompt is answered (see config.worktree_batch_remove).
         local busy = false
-        require("config.worktree_batch_remove").run(selected, {
+        batch_remove.run(selected, {
           review = function(wt, entries, cb)
             changes_confirm_picker(wt, entries, { allow_skip = true }, cb)
           end,
@@ -710,7 +712,7 @@ local function orphan_dirty_summary_async(path, on_done)
           end
         end
       end
-      on_done(true, summarize_names(names))
+      on_done(true, batch_remove.summarize_names(names))
       return
     end
     local names = {}
@@ -718,7 +720,7 @@ local function orphan_dirty_summary_async(path, on_done)
       local file_path = line:sub(4):gsub("^.* %-> ", ""):gsub('^"(.*)"$', "%1")
       table.insert(names, vim.fs.basename(file_path))
     end
-    on_done(#names > 0, summarize_names(names))
+    on_done(#names > 0, batch_remove.summarize_names(names))
   end)
 end
 

@@ -5,6 +5,7 @@
 -- closing the last tab of the worktree kills the job and its process tree. See docs/specs/0001-persistent-worktree-terminal.md.
 local shell = require("config.terminal.shell")
 local worktree = require("config.worktree")
+local worktree_tabs = require("config.worktree_tabs")
 
 local M = {}
 
@@ -90,7 +91,10 @@ end
 local function reconcile_tabs()
   local open = {}
   for _, tab in ipairs(vim.api.nvim_list_tabpages()) do
-    open[worktree_key(vim.fn.getcwd(-1, vim.api.nvim_tabpage_get_number(tab)))] = true
+    local cwd = worktree_tabs.tab_cwd(tab)
+    if cwd then
+      open[worktree_key(cwd)] = true
+    end
   end
   for key in pairs(state) do
     if not open[key] then
@@ -241,6 +245,7 @@ vim.api.nvim_create_autocmd("VimLeavePre", {
   group = vim.api.nvim_create_augroup("persistent-terminal-quit", { clear = true }),
   callback = function()
     for _, entry in pairs(state) do
+      pcall(hooks.kill_tree, entry.job)
       pcall(vim.fn.jobstop, entry.job)
     end
   end,

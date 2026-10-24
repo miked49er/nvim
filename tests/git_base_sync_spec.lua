@@ -89,6 +89,16 @@ do
   check("no warning", r.warning == nil)
 end
 
+print("base that is already a remote ref is fetched")
+do
+  local me, other = scenario()
+  local tip = sh(other, "rev-parse", "HEAD")
+  local r = run(me, "origin/main")
+  check("ref passes through", r.ref == "origin/main")
+  check("remote-tracking ref updated by fetch", sh(me, "rev-parse", "origin/main") == tip)
+  check("no warning", r.warning == nil)
+end
+
 print("diverged base")
 do
   local me, other = scenario()

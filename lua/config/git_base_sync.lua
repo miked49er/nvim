@@ -7,7 +7,10 @@
 --   3. else (diverged / checked out in another worktree / no upstream)
 --      start_ref = "<remote>/<base>"
 --   4. else (e.g. offline) start_ref = base and warning is set
--- Bases that aren't local branches (tags, remote refs, HEAD) pass through.
+-- The remote is branch.<base>.remote when configured (intentional: a base
+-- tracking e.g. "upstream" is synced from there), else "origin".
+-- Remote-tracking bases ("origin/main") are fetched, then passed through.
+-- Other bases (tags, HEAD) pass through untouched.
 local branch_cache = require("config.branch_cache")
 
 local M = {}
@@ -30,7 +33,24 @@ function M.prepare(base, on_done)
 
   git({ "rev-parse", "--verify", "--quiet", "refs/heads/" .. base }, function(is_local)
     if is_local.code ~= 0 then
-      return on_done(base, nil)
+      -- A remote-tracking ref (e.g. "origin/main") has no local branch to
+      -- fast-forward, but is still fetched so the new branch starts at the
+      -- remote's tip.
+      local remote, branch = base:match("^([^/]+)/(.+)$")
+      if not remote then
+        return on_done(base, nil)
+      end
+      return git({ "rev-parse", "--verify", "--quiet", "refs/remotes/" .. base }, function(is_remote)
+        if is_remote.code ~= 0 then
+          return on_done(base, nil)
+        end
+        git({ "fetch", remote, branch }, function(fetched)
+          if fetched.code ~= 0 then
+            return on_done(base, "Branch may be behind the remote (fetch failed); created from '" .. base .. "'")
+          end
+          on_done(base, nil)
+        end)
+      end)
     end
     git({ "config", "--get", "branch." .. base .. ".remote" }, function(cfg)
       local remote = vim.trim(cfg.stdout or "")

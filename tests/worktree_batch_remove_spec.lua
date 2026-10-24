@@ -185,6 +185,66 @@ do
   check("skipped kept", exists(wts[2]))
 end
 
+print("removals run one at a time, never concurrently")
+do
+  local _, wts = scenario({ { "a" }, { "b" }, { "c", true } })
+  local inflight, max_inflight, finished = 0, 0, false
+  local orig = vim.ui.select
+  vim.ui.select = function(items, _, cb) return cb("Force remove all", 1) end
+  batch.run(wts, {
+    remove = function(wt, force, on_done)
+      inflight = inflight + 1
+      max_inflight = math.max(max_inflight, inflight)
+      local args = { "git", "worktree", "remove" }
+      if force then table.insert(args, "--force") end
+      table.insert(args, wt.path)
+      vim.system(args, { text = true }, function(r)
+        vim.schedule(function()
+          inflight = inflight - 1
+          on_done(r)
+        end)
+      end)
+    end,
+    done = function() finished = true end,
+  })
+  vim.wait(10000, function() return finished end, 20)
+  vim.ui.select = orig
+  check("finished", finished)
+  check("never more than one removal in flight", max_inflight == 1, tostring(max_inflight))
+  check("all removed", not exists(wts[1]) and not exists(wts[2]) and not exists(wts[3]))
+end
+
+print("locked dirty worktree is not offered force removal; failure is reported")
+do
+  local _, wts = scenario({ { "a" }, { "b", true } })
+  sh(wts[2].path, "worktree", "lock", wts[2].path)
+  local prompts, _, fin = run(wts, {})
+  check("finished", fin)
+  check("no prompt offered", #prompts == 0, vim.inspect(prompts))
+  check("clean removed", not exists(wts[1]))
+  check("locked kept", exists(wts[2]))
+end
+
+print("locked worktree failure is passed to on_failure")
+do
+  local _, wts = scenario({ { "b", true } })
+  sh(wts[1].path, "worktree", "lock", wts[1].path)
+  local fails, finished = {}, false
+  batch.run(wts, {
+    remove = function(wt, force, on_done)
+      local args = { "git", "worktree", "remove" }
+      if force then table.insert(args, "--force") end
+      table.insert(args, wt.path)
+      vim.system(args, { text = true }, function(r) vim.schedule(function() on_done(r) end) end)
+    end,
+    on_failure = function(_, r) fails[#fails + 1] = r.stderr end,
+    done = function() finished = true end,
+  })
+  vim.wait(10000, function() return finished end, 20)
+  check("one failure reported", #fails == 1 and fails[1]:find("locked", 1, true) ~= nil, vim.inspect(fails))
+  check("still present", exists(wts[1]))
+end
+
 vim.fn.chdir(repo_root)
 if #failures > 0 then
   print(#failures .. " failure(s)")
