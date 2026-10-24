@@ -11,6 +11,7 @@ local menu_stack = require("config.telescope.menu_stack")
 local worktree = require("config.worktree")
 local git_busy = require("config.git_busy")
 local branch_cache = require("config.branch_cache")
+local git_base_sync = require("config.git_base_sync")
 
 local M = {}
 
@@ -1207,6 +1208,19 @@ local function open_picker(mode)
       :find()
 end
 
+-- Async-updates the base from its remote (busy guard shown meanwhile), warns
+-- if the branch may start behind the remote, then calls create(start_ref).
+local function create_from_fresh_base(base, create)
+  git_busy.start("updating " .. base)
+  git_base_sync.prepare(base, function(start, warning)
+    git_busy.stop()
+    if warning then
+      vim.notify(warning, vim.log.levels.WARN)
+    end
+    create(start)
+  end)
+end
+
 handle_new = function(mode, name)
   name = name:gsub(" ", "-")
   local function reopen()
@@ -1215,11 +1229,15 @@ handle_new = function(mode, name)
   menu_stack.push(reopen)
   if mode == "branch" then
     prompt_base_ref(function(base)
-      create_and_switch_branch(name, base)
+      create_from_fresh_base(base, function(start)
+        create_and_switch_branch(name, start)
+      end)
     end)
   else
     prompt_base_ref(function(base)
-      create_worktree_new_branch(name, base)
+      create_from_fresh_base(base, function(start)
+        create_worktree_new_branch(name, start)
+      end)
     end)
   end
 end
