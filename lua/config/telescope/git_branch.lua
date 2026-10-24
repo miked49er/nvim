@@ -527,53 +527,6 @@ local function confirm_force_remove(wt, on_done)
   end)
 end
 
--- Follow-up for a batch removal's dirty worktrees: one prompt to force them
--- all, review them one at a time, or leave them.
-local function resolve_dirty_worktrees(dirty)
-  local summaries = {}
-  local pending = #dirty
-  for i, wt in ipairs(dirty) do
-    worktree_changes_summary_async(wt, function(summary)
-      summaries[i] = vim.fs.basename(wt.path) .. (summary ~= "" and (" (" .. summary .. ")") or "")
-      pending = pending - 1
-      if pending > 0 then
-        return
-      end
-      local force_all = "Force remove all"
-      local one_by_one = "Review one by one"
-      local skip = "Skip"
-      vim.ui.select({ force_all, one_by_one, skip }, {
-        prompt = #dirty .. " worktrees have changes: " .. table.concat(summaries, "; "),
-      }, function(choice)
-        if choice == force_all then
-          git_busy.start("removing " .. #dirty .. " worktrees")
-          local remaining = #dirty
-          for _, w in ipairs(dirty) do
-            remove_worktree_async(w, function(result)
-              if result.code ~= 0 then
-                notify_err("git worktree remove failed", result)
-              end
-              remaining = remaining - 1
-              if remaining == 0 then
-                git_busy.stop()
-              end
-            end, true)
-          end
-        elseif choice == one_by_one then
-          local idx = 0
-          local function next_one()
-            idx = idx + 1
-            if dirty[idx] then
-              confirm_force_remove(dirty[idx], next_one)
-            end
-          end
-          next_one()
-        end
-      end)
-    end)
-  end
-end
-
 local function remove_worktree_action()
   local open_list
   open_list = function()
@@ -588,8 +541,8 @@ local function remove_worktree_action()
       -- Single selection offers the interactive force-remove prompt, but only
       -- for the "has uncommitted changes" failure: a locked worktree is
       -- usually locked on purpose, so that failure is reported and left
-      -- alone rather than offered a force-retry. Batch removal removes the
-      -- clean ones first, then offers one follow-up prompt for the dirty ones.
+      -- alone rather than offered a force-retry. Batch removal checks all
+      -- worktrees and collects every decision before removing any.
       if #selected == 1 then
         local wt = selected[1]
         confirm_picker("Remove worktree at " .. wt.path .. "?", function()
@@ -614,27 +567,26 @@ local function remove_worktree_action()
         table.insert(names, vim.fs.basename(wt.path))
       end
       confirm_picker("Remove " .. #selected .. " worktrees: " .. table.concat(names, ", ") .. "?", function()
-        local dirty = {}
-        local remaining = #selected
-        git_busy.start("removing " .. #selected .. " worktrees")
-        for _, wt in ipairs(selected) do
-          remove_worktree_async(wt, function(result)
-            if result.code ~= 0 then
-              if is_locked_failure(result) then
-                notify_err("git worktree remove failed", result)
-              else
-                table.insert(dirty, wt)
-              end
+        -- Decisions first, removals second: nothing is removed until every
+        -- dirty-worktree prompt is answered (see config.worktree_batch_remove).
+        local busy = false
+        require("config.worktree_batch_remove").run(selected, {
+          remove = function(wt, force, on_done)
+            if not busy then
+              busy = true
+              git_busy.start("removing " .. #selected .. " worktrees")
             end
-            remaining = remaining - 1
-            if remaining == 0 then
+            remove_worktree_async(wt, on_done, force)
+          end,
+          on_failure = function(_, result)
+            notify_err("git worktree remove failed", result)
+          end,
+          done = function()
+            if busy then
               git_busy.stop()
-              if #dirty > 0 then
-                resolve_dirty_worktrees(dirty)
-              end
             end
-          end)
-        end
+          end,
+        })
       end)
     end)
   end
@@ -705,7 +657,7 @@ local function remove_orphan_folder(path)
 end
 
 -- Follow-up for a batch prune's dirty folders: one prompt to force them all,
--- review them one at a time, or leave them -- mirrors resolve_dirty_worktrees.
+-- review them one at a time, or leave them.
 local function resolve_dirty_orphans(dirty)
   local summaries = {}
   for _, o in ipairs(dirty) do
