@@ -464,22 +464,10 @@ local function create_worktree_for_branch(entry)
   open_worktree_tab(path)
 end
 
-local function tabnr_for_cwd(path)
-  local normalized = vim.fs.normalize(path)
-  for _, tabnr in ipairs(vim.api.nvim_list_tabpages()) do
-    if vim.fs.normalize(vim.fn.getcwd(-1, tabnr)) == normalized then
-      return tabnr
-    end
-  end
-  return nil
-end
-
 local function finish_worktree_removal(wt)
   vim.notify("Removed worktree " .. wt.path)
-  local tabnr = tabnr_for_cwd(wt.path)
-  if tabnr and #vim.api.nvim_list_tabpages() > 1 then
-    vim.cmd(tabnr .. "tabclose")
-  end
+  -- Tab cleanup must never abort the caller's on_done (batch removal).
+  pcall(require("config.worktree_tabs").close_for_cwd, wt.path)
 end
 
 -- Async: on_done(result) runs whether or not the removal succeeded; success
