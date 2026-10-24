@@ -129,6 +129,62 @@ do
   check("nothing removed", exists(wts[1]) and exists(wts[2]) and exists(wts[3]))
 end
 
+print("changes_summary_async returns status + full relative path entries")
+do
+  local _, wts = scenario({ { "a" } })
+  vim.fn.mkdir(wts[1].path .. "/sub", "p")
+  vim.fn.writefile({ "x" }, wts[1].path .. "/sub/new.txt")
+  vim.fn.writefile({ "x" }, wts[1].path .. "/top.txt")
+  sh(wts[1].path, "add", "sub/new.txt")
+  local got
+  batch.changes_summary_async(wts[1], function(e) got = e end)
+  vim.wait(5000, function() return got ~= nil end, 20)
+  check("two entries", got and #got == 2, vim.inspect(got))
+  check("added file with nested path",
+    got and got[1].status == "A" and got[1].path == "sub/new.txt", vim.inspect(got))
+  check("untracked top-level file", got and got[2].status == "??" and got[2].path == "top.txt", vim.inspect(got))
+  local _, cw = scenario({ { "c2" } })
+  local c
+  batch.changes_summary_async(cw[1], function(e) c = e end)
+  vim.wait(5000, function() return c ~= nil end, 20)
+  check("clean is empty list", c and #c == 0, vim.inspect(c))
+end
+
+print("review one by one uses deps.review with entries instead of vim.ui.select")
+do
+  local _, wts = scenario({ { "b", true }, { "c", true } })
+  local seen, finished = {}, false
+  local answers = { "force", "skip" }
+  local orig = vim.ui.select
+  local selects = 0
+  vim.ui.select = function(items, opts, cb)
+    selects = selects + 1
+    if selects == 1 then return cb("Review one by one", 2) end
+    error("unexpected select")
+  end
+  batch.run(wts, {
+    remove = function(wt, force, on_done)
+      local args = { "git", "worktree", "remove" }
+      if force then table.insert(args, "--force") end
+      table.insert(args, wt.path)
+      vim.system(args, { text = true }, function(r) vim.schedule(function() on_done(r) end) end)
+    end,
+    review = function(wt, entries, cb)
+      seen[#seen + 1] = { wt = wt, entries = entries }
+      cb(answers[#seen])
+    end,
+    done = function() finished = true end,
+  })
+  vim.wait(10000, function() return finished end, 20)
+  vim.ui.select = orig
+  check("finished", finished)
+  check("review called per dirty worktree", #seen == 2)
+  check("entries passed", seen[1] and seen[1].entries[1].status == "??" and seen[1].entries[1].path == "dirty.txt",
+    vim.inspect(seen[1]))
+  check("forced removed", not exists(wts[1]))
+  check("skipped kept", exists(wts[2]))
+end
+
 vim.fn.chdir(repo_root)
 if #failures > 0 then
   print(#failures .. " failure(s)")

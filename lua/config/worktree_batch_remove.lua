@@ -14,20 +14,38 @@ local function summarize_names(names)
   return summary
 end
 
--- Async: on_done(summary) gets e.g. "Podfile.lock, a.txt, b.txt +4 more"
--- (untracked files included, since they block a plain remove too). Empty
--- string means the worktree is clean.
+-- Short one-line form of entries, for the group prompt.
+function M.summarize_entries(entries)
+  local names = {}
+  for _, e in ipairs(entries) do
+    table.insert(names, vim.fs.basename(e.path))
+  end
+  return summarize_names(names)
+end
+
+-- Parse `git status --porcelain` output into { {status = "??", path = "dir/a.txt"}, ... }.
+function M.parse_porcelain(stdout)
+  local entries = {}
+  for _, line in ipairs(vim.split(stdout or "", "\n", { trimempty = true })) do
+    local path = line:sub(4):gsub("^.* %-> ", ""):gsub('^"(.*)"$', "%1")
+    table.insert(entries, { status = vim.trim(line:sub(1, 2)), path = path })
+  end
+  return entries
+end
+
+-- Async: on_done(entries) gets the full list of changes, each {status, path}
+-- (untracked files included, since they block a plain remove too). An empty
+-- list means the worktree is clean.
 function M.changes_summary_async(wt, on_done)
-  vim.system({ "git", "-C", wt.path, "status", "--porcelain" }, { text = true }, function(result)
-    vim.schedule(function()
-      local names = {}
-      for _, line in ipairs(vim.split(result.stdout or "", "\n", { trimempty = true })) do
-        local path = line:sub(4):gsub("^.* %-> ", ""):gsub('^"(.*)"$', "%1")
-        table.insert(names, vim.fs.basename(path))
-      end
-      on_done(summarize_names(names))
-    end)
-  end)
+  vim.system(
+    { "git", "-C", wt.path, "status", "--porcelain", "--untracked-files=all" },
+    { text = true },
+    function(result)
+      vim.schedule(function()
+        on_done(M.parse_porcelain(result.stdout))
+      end)
+    end
+  )
 end
 
 local FORCE_ALL = "Force remove all"
@@ -39,6 +57,8 @@ local FORCE_ONE = "Force remove"
 -- deps.remove(wt, force, on_done(result)): performs one removal (required).
 -- deps.done(): called when finished or cancelled (optional).
 -- deps.on_failure(wt, result): called per failed removal (optional).
+-- deps.review(wt, entries, cb): per-worktree review view (optional; falls
+-- back to vim.ui.select). cb("force" | "skip" | nil for cancel).
 function M.run(selected, deps)
   local function finish()
     if deps.done then
@@ -73,7 +93,7 @@ function M.run(selected, deps)
   local function decide()
     local clean, dirty = {}, {}
     for _, info in ipairs(infos) do
-      table.insert(info.summary == "" and clean or dirty, info)
+      table.insert(#info.entries == 0 and clean or dirty, info)
     end
 
     local plan = {}
@@ -86,7 +106,7 @@ function M.run(selected, deps)
 
     local labels = {}
     for _, info in ipairs(dirty) do
-      table.insert(labels, vim.fs.basename(info.wt.path) .. " (" .. info.summary .. ")")
+      table.insert(labels, vim.fs.basename(info.wt.path) .. " (" .. M.summarize_entries(info.entries) .. ")")
     end
     vim.ui.select({ FORCE_ALL, ONE_BY_ONE, SKIP }, {
       prompt = #dirty .. " worktrees have changes: " .. table.concat(labels, "; "),
@@ -106,17 +126,27 @@ function M.run(selected, deps)
           if not info then
             return execute(plan)
           end
-          vim.ui.select({ FORCE_ONE, SKIP }, {
-            prompt = info.wt.path .. " has changes (" .. info.summary .. ")",
-          }, function(pick)
+          local function answered(pick, force_value)
             if pick == nil then
               return finish() -- cancelled: nothing removed
             end
-            if pick == FORCE_ONE then
+            if pick == force_value then
               table.insert(plan, { wt = info.wt, force = true })
             end
             next_one()
-          end)
+          end
+          if deps.review then
+            -- Rich view: cb("force" | "skip" | nil)
+            deps.review(info.wt, info.entries, function(pick)
+              answered(pick, "force")
+            end)
+          else
+            vim.ui.select({ FORCE_ONE, SKIP }, {
+              prompt = info.wt.path .. " has changes (" .. M.summarize_entries(info.entries) .. ")",
+            }, function(pick)
+              answered(pick, FORCE_ONE)
+            end)
+          end
         end
         next_one()
       else
@@ -126,8 +156,8 @@ function M.run(selected, deps)
   end
 
   for i, wt in ipairs(selected) do
-    M.changes_summary_async(wt, function(summary)
-      infos[i] = { wt = wt, summary = summary }
+    M.changes_summary_async(wt, function(entries)
+      infos[i] = { wt = wt, entries = entries }
       pending = pending - 1
       if pending == 0 then
         decide()
