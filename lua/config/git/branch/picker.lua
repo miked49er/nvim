@@ -11,6 +11,7 @@ local menu_stack = require("config.ui.menu")
 local worktree = require("config.git.worktree.identity")
 local repo = require("config.git.repo")
 local git_base_sync = require("config.git.branch.base_sync")
+local ops = require("config.git.branch.ops")
 local batch_remove = require("config.git.worktree.remove")
 local remove_adapter = require("config.git.worktree.remove_adapter.telescope")
 
@@ -19,35 +20,10 @@ local M = {}
 local WORKTREE_ICON = worktree.ICON
 local WORKTREE_HL = "GitBranchWorktree"
 
--- A repo handle is opened per call for the current directory. Outside a
--- repository the runners return a failed result, as git itself would.
-local function not_a_repo_result()
-  return { code = 128, stdout = "", stderr = "fatal: not a git repository" }
-end
-
+-- A repo handle is opened per call for the current directory; nil outside a
+-- repository.
 local function open_repo()
   return repo.open(vim.fn.getcwd())
-end
-
-local function git(args)
-  local h = open_repo()
-  return h and h:run(args) or not_a_repo_result()
-end
-
--- Non-blocking counterpart to git(): on_done runs on the main loop.
-local function git_async(args, on_done)
-  local h = open_repo()
-  if not h then
-    return vim.schedule(function()
-      on_done(not_a_repo_result())
-    end)
-  end
-  h:run_async(args, on_done)
-end
-
-local function git_lines(args)
-  local h = open_repo()
-  return h and h:lines(args) or {}
 end
 
 local function notify_err(prefix, result)
@@ -354,74 +330,69 @@ local function pick_entries_multi(title, entries, entry_maker, callback)
       :find()
 end
 
-local function switch_branch(name)
-  local result = git({ "switch", name })
-  if result.code ~= 0 then
-    notify_err("git switch failed", result)
-    return
+-- Reports an ops result: notifies the error on failure, otherwise the success
+-- message (a string, or a function of the result value). Returns true on success.
+local function report(result, fail_prefix, ok_msg)
+  if not result.ok then
+    vim.notify(fail_prefix .. ": " .. result.err, vim.log.levels.ERROR)
+    return false
   end
-  vim.notify("Switched to branch " .. name)
+  if ok_msg then
+    vim.notify(type(ok_msg) == "function" and ok_msg(result.value) or ok_msg)
+  end
+  return true
+end
+
+-- Merge-style failures that left unmerged files fall back to the diff tool.
+local function report_conflicts(result, label)
+  if result.conflicts then
+    vim.notify(label .. " conflicts in " .. #result.conflicts .. " file(s); opening changes panel", vim.log.levels.WARN)
+    require("diffbandit").commit_panel()
+    return true
+  end
+  return false
+end
+
+local NOT_A_REPO = { ok = false, err = "fatal: not a git repository" }
+
+local function switch_branch(name)
+  local h = open_repo()
+  report(h and ops.switch(h, name) or NOT_A_REPO, "git switch failed", "Switched to branch " .. name)
 end
 
 local function checkout_remote_tracking(name, remote)
-  local result = git({ "switch", "-c", name, "--track", remote })
-  if result.code ~= 0 then
-    notify_err("git switch failed", result)
-    return
-  end
-  vim.notify("Switched to branch " .. name)
+  local h = open_repo()
+  report(h and ops.track_remote(h, name, remote) or NOT_A_REPO, "git switch failed", "Switched to branch " .. name)
 end
 
 local function create_and_switch_branch(name, base)
-  local result = git({ "switch", "-c", name, base })
-  if result.code ~= 0 then
-    notify_err("git switch -c failed", result)
-    return
-  end
-  vim.notify("Created and switched to branch " .. name)
-end
-
-local function ensure_worktrees_dir()
-  local root = repo_root()
-  if root then
-    vim.fn.mkdir(vim.fs.joinpath(root, ".claude", "worktrees"), "p")
-  end
+  local h = open_repo()
+  report(h and ops.create(h, name, base) or NOT_A_REPO, "git switch -c failed",
+    "Created and switched to branch " .. name)
 end
 
 local function create_worktree_new_branch(name, base)
+  local h = open_repo()
   local path = worktree_path_for(name)
-  if not path then
+  if not (h and path) then
     vim.notify("Could not resolve repo root", vim.log.levels.ERROR)
     return
   end
-  ensure_worktrees_dir()
-  local result = git({ "worktree", "add", "-b", name, path, base })
-  if result.code ~= 0 then
-    notify_err("git worktree add failed", result)
-    return
+  if report(ops.worktree_add_new(h, path, name, base), "git worktree add failed") then
+    open_worktree_tab(path)
   end
-  open_worktree_tab(path)
 end
 
 local function create_worktree_for_branch(entry)
+  local h = open_repo()
   local path = worktree_path_for(entry.name)
-  if not path then
+  if not (h and path) then
     vim.notify("Could not resolve repo root", vim.log.levels.ERROR)
     return
   end
-  ensure_worktrees_dir()
-  local args
-  if entry.is_local then
-    args = { "worktree", "add", path, entry.name }
-  else
-    args = { "worktree", "add", "-b", entry.name, path, entry.remote }
+  if report(ops.worktree_add_existing(h, path, entry), "git worktree add failed") then
+    open_worktree_tab(path)
   end
-  local result = git(args)
-  if result.code ~= 0 then
-    notify_err("git worktree add failed", result)
-    return
-  end
-  open_worktree_tab(path)
 end
 
 -- Reports a removal result: notifications live here, removal itself lives in
@@ -553,90 +524,79 @@ local function prune_worktree_folders_action()
       :find()
 end
 
--- Local-only cleanup: never touches the remote. If the deleted branch left a
--- stale remote-tracking ref behind (origin/<name>), drop that too, so it
--- doesn't linger in the picker as a "[remote]" entry.
-local function prune_stale_remote_ref(name)
-  if git({ "rev-parse", "--verify", "--quiet", "refs/remotes/origin/" .. name }).code == 0 then
-    git({ "branch", "-dr", "origin/" .. name })
-  end
-end
-
 -- Async: on_done(result) runs whether or not the delete succeeded; success
 -- notification fires here since every caller wants it.
-local function delete_branch_async(entry, on_done)
-  git_async({ "branch", "-d", entry.name }, function(result)
-    if result.code == 0 then
+local function delete_branch_async(entry, force, on_done)
+  local h = open_repo()
+  if not h then
+    return vim.schedule(function()
+      on_done(NOT_A_REPO)
+    end)
+  end
+  ops.delete_async(h, entry.name, { force = force }, function(result)
+    if result.ok then
       vim.notify("Deleted branch " .. entry.name)
-      prune_stale_remote_ref(entry.name)
     end
     on_done(result)
   end)
 end
 
 local function delete_branch_action()
-  local open_list
-  open_list = function()
-    pick_entries_multi("Delete Branch", list_local_branches(), branch_entry_maker, function(selected)
-      -- Single selection keeps the interactive force-delete prompt. Batch
-      -- delete skips per-item prompts and reports which ones need a manual
-      -- force-delete, same as the worktree removal flow.
-      if #selected == 1 then
-        local entry = selected[1]
-        confirm_picker("Delete branch " .. entry.name .. "?", function()
-          local busy = repo.busy.start("deleting " .. entry.name)
-          delete_branch_async(entry, function(result)
-            repo.busy.stop(busy)
-            if result.code == 0 then
-              return
-            end
-            notify_err("git branch -d failed", result)
-            confirm_picker(entry.name .. " is not fully merged. Force delete?", function()
-              local force_busy = repo.busy.start("deleting " .. entry.name)
-              git_async({ "branch", "-D", entry.name }, function(force_result)
-                repo.busy.stop(force_busy)
-                if force_result.code ~= 0 then
-                  notify_err("git branch -D failed", force_result)
-                  return
-                end
-                vim.notify("Deleted branch " .. entry.name)
-                prune_stale_remote_ref(entry.name)
-              end)
+  pick_entries_multi("Delete Branch", list_local_branches(), branch_entry_maker, function(selected)
+    -- Single selection keeps the interactive force-delete prompt. Batch
+    -- delete skips per-item prompts and reports which ones need a manual
+    -- force-delete, same as the worktree removal flow.
+    if #selected == 1 then
+      local entry = selected[1]
+      confirm_picker("Delete branch " .. entry.name .. "?", function()
+        local busy = repo.busy.start("deleting " .. entry.name)
+        delete_branch_async(entry, false, function(result)
+          repo.busy.stop(busy)
+          if result.ok then
+            return
+          end
+          vim.notify("git branch -d failed: " .. result.err, vim.log.levels.ERROR)
+          confirm_picker(entry.name .. " is not fully merged. Force delete?", function()
+            local force_busy = repo.busy.start("deleting " .. entry.name)
+            delete_branch_async(entry, true, function(force_result)
+              repo.busy.stop(force_busy)
+              if not force_result.ok then
+                vim.notify("git branch -D failed: " .. force_result.err, vim.log.levels.ERROR)
+              end
             end)
           end)
         end)
-        return
-      end
-
-      local names = {}
-      for _, entry in ipairs(selected) do
-        table.insert(names, entry.name)
-      end
-      confirm_picker("Delete " .. #selected .. " branches: " .. table.concat(names, ", ") .. "?", function()
-        local failed = {}
-        local remaining = #selected
-        local busy = repo.busy.start("deleting " .. #selected .. " branches")
-        for _, entry in ipairs(selected) do
-          delete_branch_async(entry, function(result)
-            if result.code ~= 0 then
-              table.insert(failed, entry.name)
-            end
-            remaining = remaining - 1
-            if remaining == 0 then
-              repo.busy.stop(busy)
-              if #failed > 0 then
-                vim.notify(
-                  "Not fully merged, delete individually to force: " .. table.concat(failed, ", "),
-                  vim.log.levels.WARN
-                )
-              end
-            end
-          end)
-        end
       end)
+      return
+    end
+
+    local names = {}
+    for _, entry in ipairs(selected) do
+      table.insert(names, entry.name)
+    end
+    confirm_picker("Delete " .. #selected .. " branches: " .. table.concat(names, ", ") .. "?", function()
+      local failed = {}
+      local remaining = #selected
+      local busy = repo.busy.start("deleting " .. #selected .. " branches")
+      for _, entry in ipairs(selected) do
+        delete_branch_async(entry, false, function(result)
+          if not result.ok then
+            table.insert(failed, entry.name)
+          end
+          remaining = remaining - 1
+          if remaining == 0 then
+            repo.busy.stop(busy)
+            if #failed > 0 then
+              vim.notify(
+                "Not fully merged, delete individually to force: " .. table.concat(failed, ", "),
+                vim.log.levels.WARN
+              )
+            end
+          end
+        end)
+      end
     end)
-  end
-  open_list()
+  end)
 end
 
 local function rename_branch_action()
@@ -646,12 +606,9 @@ local function rename_branch_action()
       menu_stack.push(open_list)
       prompt_text("New name for " .. entry.name, entry.name, function(input)
         local new_name = input:gsub(" ", "-")
-        local result = git({ "branch", "-m", entry.name, new_name })
-        if result.code ~= 0 then
-          notify_err("git branch -m failed", result)
-          return
-        end
-        vim.notify("Renamed branch " .. entry.name .. " to " .. new_name)
+        local h = open_repo()
+        report(h and ops.rename(h, entry.name, new_name) or NOT_A_REPO, "git branch -m failed",
+          "Renamed branch " .. entry.name .. " to " .. new_name)
       end)
     end)
   end
@@ -660,46 +617,28 @@ end
 
 local function merge_branch_action()
   pick_entry("Merge into " .. current_head(), list_branches(), branch_entry_maker, function(entry)
-    local source = entry.is_local and entry.name or entry.remote
-    local result = git({ "merge", source })
-    if result.code == 0 then
-      vim.notify("Merged " .. source .. " into " .. current_head())
-      return
+    local h = open_repo()
+    local result = h and ops.merge(h, entry) or NOT_A_REPO
+    if result.ok then
+      vim.notify("Merged " .. result.value .. " into " .. current_head())
+    elseif not report_conflicts(result, "Merge") then
+      report(result, "git merge failed")
     end
-    local unmerged = git_lines({ "diff", "--name-only", "--diff-filter=U" })
-    if #unmerged > 0 then
-      vim.notify("Merge conflicts in " .. #unmerged .. " file(s); opening changes panel", vim.log.levels.WARN)
-      require("diffbandit").commit_panel()
-      return
-    end
-    notify_err("git merge failed", result)
   end)
 end
 
--- A plain `git push` only works when the upstream's own branch name matches
--- the local one. A branch created from a remote base (e.g. `origin/main`)
--- tracks that ref under its original name, so pushing a same-named local
--- branch to it is rejected. Treat that mismatch the same as "no upstream".
 local function push_current()
-  local branch = current_head()
-  local upstream = git_lines({ "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}" })[1]
-  local upstream_branch = upstream and upstream:match("^[^/]+/(.+)$")
-  local args = (upstream_branch == branch) and { "push" } or { "push", "-u", "origin", branch }
-  local result = git(args)
-  if result.code ~= 0 then
-    notify_err("git push failed", result)
-    return
-  end
-  vim.notify("Pushed " .. branch)
+  local h = open_repo()
+  report(h and ops.push(h) or NOT_A_REPO, "git push failed", function(branch)
+    return "Pushed " .. branch
+  end)
 end
 
 local function pull_current()
-  local result = git({ "pull" })
-  if result.code ~= 0 then
-    notify_err("git pull failed", result)
-    return
-  end
-  vim.notify("Pulled " .. current_head())
+  local h = open_repo()
+  report(h and ops.pull(h) or NOT_A_REPO, "git pull failed", function(branch)
+    return "Pulled " .. branch
+  end)
 end
 
 local function list_stashes()
@@ -709,10 +648,6 @@ end
 
 local function stash_entry_maker(entry)
   return { value = entry, display = entry.raw, ordinal = entry.raw }
-end
-
-local function stash_index(ref)
-  return tonumber(ref:match("{(%d+)}")) or 0
 end
 
 -- git status --porcelain, tracked + untracked; for renames, keeps the new
@@ -730,35 +665,20 @@ end
 -- Shared by Pop/Apply: both can fail with merge-style conflicts, handled the
 -- same way as merge_branch_action.
 local function handle_stash_result(result, action_label, success_msg)
-  if result.code == 0 then
+  if result.ok then
     vim.notify(success_msg)
-    return
+  elseif not report_conflicts(result, action_label) then
+    report(result, action_label .. " failed")
   end
-  local unmerged = git_lines({ "diff", "--name-only", "--diff-filter=U" })
-  if #unmerged > 0 then
-    vim.notify(action_label .. " conflicts in " .. #unmerged .. " file(s); opening changes panel", vim.log.levels.WARN)
-    require("diffbandit").commit_panel()
-    return
-  end
-  notify_err(action_label .. " failed", result)
 end
 
 local function stash_push_all()
   prompt_text_optional("Stash message (optional)", "", function(message)
-    local args = { "stash", "push" }
-    if message ~= "" then
-      vim.list_extend(args, { "-m", message })
+    local h = open_repo()
+    local result = h and ops.stash_push(h, { message = message }) or NOT_A_REPO
+    if report(result, "git stash push failed") then
+      vim.notify(result.value.saved and "Stashed changes" or "No local changes to stash")
     end
-    local result = git(args)
-    if result.code ~= 0 then
-      notify_err("git stash push failed", result)
-      return
-    end
-    if (result.stdout or ""):find("No local changes to save", 1, true) then
-      vim.notify("No local changes to stash")
-      return
-    end
-    vim.notify("Stashed changes")
   end)
 end
 
@@ -768,20 +688,13 @@ local function stash_push_selected()
     pick_entries_multi("Stash Files", list_changed_files(), file_entry_maker, function(selected)
       menu_stack.push(open_files)
       prompt_text_optional("Stash message (optional)", "", function(message)
-        local args = { "stash", "push", "-u" }
-        if message ~= "" then
-          vim.list_extend(args, { "-m", message })
-        end
-        table.insert(args, "--")
+        local files = {}
         for _, entry in ipairs(selected) do
-          table.insert(args, entry.path)
+          table.insert(files, entry.path)
         end
-        local result = git(args)
-        if result.code ~= 0 then
-          notify_err("git stash push failed", result)
-          return
-        end
-        vim.notify("Stashed " .. #selected .. " file(s)")
+        local h = open_repo()
+        report(h and ops.stash_push(h, { message = message, files = files }) or NOT_A_REPO,
+          "git stash push failed", "Stashed " .. #selected .. " file(s)")
       end)
     end)
   end
@@ -789,56 +702,43 @@ local function stash_push_selected()
 end
 
 local function stash_pop_action()
-  handle_stash_result(git({ "stash", "pop" }), "git stash pop", "Popped stash")
+  local h = open_repo()
+  handle_stash_result(h and ops.stash_pop(h) or NOT_A_REPO, "git stash pop", "Popped stash")
 end
 
 local function stash_apply_action()
   pick_entry("Apply Stash", list_stashes(), stash_entry_maker, function(entry)
-    handle_stash_result(git({ "stash", "apply", entry.ref }), "git stash apply", "Applied " .. entry.ref)
+    local h = open_repo()
+    handle_stash_result(h and ops.stash_apply(h, entry.ref) or NOT_A_REPO, "git stash apply", "Applied " .. entry.ref)
   end)
 end
 
 local function stash_drop_action()
-  local open_list
-  open_list = function()
-    pick_entries_multi("Drop Stash", list_stashes(), stash_entry_maker, function(selected)
-      if #selected == 1 then
-        local entry = selected[1]
-        confirm_picker("Drop " .. entry.raw .. "?", function()
-          local result = git({ "stash", "drop", entry.ref })
-          if result.code ~= 0 then
-            notify_err("git stash drop failed", result)
-            return
-          end
-          vim.notify("Dropped " .. entry.ref)
-        end)
-        return
-      end
+  pick_entries_multi("Drop Stash", list_stashes(), stash_entry_maker, function(selected)
+    if #selected == 1 then
+      local entry = selected[1]
+      confirm_picker("Drop " .. entry.raw .. "?", function()
+        local h = open_repo()
+        report(h and ops.stash_drop(h, entry.ref) or NOT_A_REPO, "git stash drop failed", "Dropped " .. entry.ref)
+      end)
+      return
+    end
 
-      -- Drop highest index first: dropping an older stash never renumbers
-      -- newer ones, but dropping a newer one shifts every older index down.
-      table.sort(selected, function(a, b)
-        return stash_index(a.ref) > stash_index(b.ref)
-      end)
-      local refs = {}
-      for _, entry in ipairs(selected) do
-        table.insert(refs, entry.ref)
+    local refs = {}
+    for _, entry in ipairs(selected) do
+      table.insert(refs, entry.ref)
+    end
+    confirm_picker("Drop " .. #selected .. " stashes: " .. table.concat(refs, ", ") .. "?", function()
+      local h = open_repo()
+      if not h then
+        return report(NOT_A_REPO, "git stash drop failed")
       end
-      confirm_picker("Drop " .. #selected .. " stashes: " .. table.concat(refs, ", ") .. "?", function()
-        local failed = {}
-        for _, entry in ipairs(selected) do
-          local result = git({ "stash", "drop", entry.ref })
-          if result.code ~= 0 then
-            table.insert(failed, entry.ref)
-          end
-        end
-        if #failed > 0 then
-          vim.notify("Failed to drop: " .. table.concat(failed, ", "), vim.log.levels.WARN)
-        end
-      end)
+      local failed = ops.stash_drop_many(h, refs).value.failed
+      if #failed > 0 then
+        vim.notify("Failed to drop: " .. table.concat(failed, ", "), vim.log.levels.WARN)
+      end
     end)
-  end
-  open_list()
+  end)
 end
 
 local function handle_existing(mode, entry)
