@@ -136,6 +136,14 @@ do
   check("path", titles(ad) == "L>T>L>T", titles(ad))
 end
 
+print("menu: prefer without rank fails clearly")
+do
+  local ok, err = pcall(menu.open, { kind = "choose_one", title = "P", items = { "a" },
+    prefer = function() return true end, on_select = function() end }, { adapter = scripted.new({ "a" }) })
+  check("errors", not ok)
+  check("message names prefer/rank", tostring(err):find("prefer", 1, true) and tostring(err):find("rank", 1, true))
+end
+
 if #failures > 0 then
   print(#failures .. " FAILED")
   os.exit(1)
