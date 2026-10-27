@@ -5,6 +5,7 @@
 -- creates it.
 local menu = require("config.ui.menu")
 local identity = require("config.git.worktree.identity")
+local entries = require("config.git.branch.entries")
 local palette = require("config.ui.palette")
 local repo = require("config.git.repo")
 local git_base_sync = require("config.git.branch.base_sync")
@@ -78,23 +79,6 @@ local function list_local_branches()
   end, list_branches())
 end
 
--- Stable partition: branches with a worktree checked out first, preserving
--- list_branches()'s existing relative order within each group. Only matters
--- for the picker's initial, empty-prompt display; the menu's `prefer` keeps
--- this priority once the user starts typing.
-local function worktrees_first(entries, worktree_map)
-  local with_wt, without_wt = {}, {}
-  for _, entry in ipairs(entries) do
-    if worktree_map[entry.name] then
-      table.insert(with_wt, entry)
-    else
-      table.insert(without_wt, entry)
-    end
-  end
-  vim.list_extend(with_wt, without_wt)
-  return with_wt
-end
-
 local function worktree_path_for(branch)
   local root = repo_root()
   if not root then
@@ -109,14 +93,7 @@ local function open_worktree_tab(path)
   vim.notify("Worktree: " .. path)
 end
 
--- Plain display data for a branch; the menu adapter renders it.
-local function branch_entry(entry)
-  local display = entry.name
-  if not entry.is_local then
-    display = display .. "  [remote]"
-  end
-  return { display = display, ordinal = entry.name }
-end
+local branch_entry = entries.branch
 
 local function dir_entry(item)
   local name = vim.fs.basename(item.path)
@@ -382,22 +359,11 @@ local function switch_create(mode)
     return {
       kind = "choose_one",
       title = mode == "branch" and "Switch/Create Branch" or "Switch/Create Worktree",
-      items = worktrees_first(list_branches(), worktree_map),
-      prefer = function(entry)
-        return worktree_map[entry.name] ~= nil
-      end,
+      items = entries.order(list_branches(), worktree_map),
+      prefer = entries.prefers(worktree_map),
       entry = function(entry)
-        local made = branch_entry(entry)
-        local wt_path = worktree_map[entry.name]
-        if wt_path then
-          local wt_name = identity.name_differs(wt_path, entry.name)
-          if wt_name then
-            made.display = wt_name .. ":" .. made.display
-            made.ordinal = wt_name .. " " .. made.ordinal
-          end
-          if mode == "worktree" then
-            made.display = made.display .. "  (" .. wt_path .. ")"
-          end
+        local made = entries.describe(entry, worktree_map, mode)
+        if made.worktree then
           made.icon = WORKTREE_ICON
           made.hl = WORKTREE_HL
         end
