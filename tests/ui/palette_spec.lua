@@ -29,6 +29,21 @@ check("runs immediately", runs == 1)
 vim.api.nvim_exec_autocmds("ColorScheme", {})
 check("reruns on colorscheme", runs == 2)
 
+-- Definitions keep resolving to the pre-refactor attributes
+vim.g.terminal_color_1 = "#ffff00"
+vim.g.terminal_color_4 = "#000080"
+p.define_slot_groups("MiniStatusline", function(color)
+  return { fg = p.fg_for_bg(color), bg = color, bold = true }
+end)
+local function hl(name) return vim.api.nvim_get_hl(0, { name = name, link = false }) end
+local s1, s2 = hl("MiniStatuslineWorktree1"), hl("MiniStatuslineWorktree" .. 2)
+check("statusline slot 1 (light bg) black fg", s1.bg == 0xffff00 and s1.fg == 0x000000 and s1.bold == true)
+local s4 = hl("MiniStatuslineWorktree4")
+check("statusline slot 4 (dark bg) white fg", s4.bg == 0x000080 and s4.fg == 0xffffff and s4.bold == true)
+require("config.git.branch.picker").setup()
+local w = hl("GitBranchWorktree")
+check("picker worktree hl is DeepSkyBlue bold, fg only", w.fg == 0x00bfff and w.bold == true and w.bg == nil)
+
 -- Tabline re-reads its base highlight on every run
 vim.o.termguicolors = true
 local tabline = require("config.tabline")
