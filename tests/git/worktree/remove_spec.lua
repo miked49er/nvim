@@ -1,7 +1,8 @@
 -- Run with: nvim --headless -l tests/git/worktree/remove_spec.lua
 -- Real git repo + worktrees; only the prompt (vim.ui.select) is scripted.
 local repo_root = vim.fn.getcwd()
-package.path = repo_root .. "/lua/?.lua;" .. repo_root .. "/lua/?/init.lua;" .. package.path
+package.path = repo_root .. "/?.lua;" .. repo_root .. "/lua/?.lua;" .. repo_root .. "/lua/?/init.lua;" .. package.path
+local tmp = require("tests.support.tmp")
 local batch = require("config.git.worktree.remove")
 
 local failures = {}
@@ -16,14 +17,13 @@ local function sh(cwd, ...)
   return vim.trim(r.stdout)
 end
 
-local tmp = vim.fn.tempname()
-vim.fn.mkdir(tmp, "p")
+local tmp_root = tmp.dir()
 local n = 0
 
 -- Fresh repo with worktrees: specs are {name, dirty?}. Returns main dir, wts.
 local function scenario(specs)
   n = n + 1
-  local main = tmp .. "/r" .. n
+  local main = tmp_root .. "/r" .. n
   vim.fn.mkdir(main, "p")
   sh(main, "init", "-b", "main")
   sh(main, "config", "user.email", "t@t")
@@ -31,7 +31,7 @@ local function scenario(specs)
   sh(main, "commit", "--allow-empty", "-m", "c1")
   local wts = {}
   for _, s in ipairs(specs) do
-    local path = tmp .. "/w" .. n .. s[1]
+    local path = tmp_root .. "/w" .. n .. s[1]
     sh(main, "worktree", "add", "-b", s[1] .. n, path)
     if s[2] then vim.fn.writefile({ "x" }, path .. "/dirty.txt") end
     wts[#wts + 1] = { path = path }
@@ -219,7 +219,7 @@ end
 vim.fn.chdir(repo_root)
 if #failures > 0 then
   print(#failures .. " failure(s)")
-  os.exit(1)
+  tmp.exit(1)
 end
 print("all passed")
-os.exit(0)
+tmp.exit(0)
