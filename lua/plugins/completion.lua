@@ -19,20 +19,7 @@ return {
       -- C-k: Toggle signature help (if signature.enabled = true)
       --
       -- See :h blink-cmp-config-keymap for defining your own keymap
-      keymap = {
-        preset = "default",
-
-        ["<Tab>"] = {
-          "select_and_accept",
-          "snippet_forward",
-          "fallback",
-        },
-
-        ["<S-Tab>"] = {
-          "snippet_backward",
-          "fallback",
-        },
-      },
+      keymap = require("config.keymaps.completion"),
 
       appearance = {
         nerd_font_variant = "mono",
