@@ -8,8 +8,6 @@ local actions = require("telescope.actions")
 local action_state = require("telescope.actions.state")
 local themes = require("telescope.themes")
 
-local rank = require("config.git.branch.entries").rank
-
 local M = {}
 
 -- name -> { modes, lhs }, defined in config.keymaps.picker. `confirm` is
@@ -42,8 +40,10 @@ end
 -- Wraps the stock fuzzy sorter so preferred entries always outrank the rest,
 -- at any fuzzy-match quality, as long as both still match the query. The inner
 -- sorter may be stateful (telescope-fzf-native), so its lifecycle is forwarded.
-local function priority_sorter(prefer)
-  local inner = conf.generic_sorter({})
+-- `rank(score, preferred)` comes from the menu declaration (the caller owns
+-- the ranking policy); `inner` defaults to the configured generic sorter.
+function M.priority_sorter(prefer, rank, inner)
+  inner = inner or conf.generic_sorter({})
   return require("telescope.sorters").new({
     discard = inner.discard,
     init = function() inner:_init() end,
@@ -81,7 +81,7 @@ function M.choose_one(req, done)
   open({
     title = req.title,
     default_text = req.default_text,
-    sorter = req.prefer and priority_sorter(req.prefer) or nil,
+    sorter = req.prefer and M.priority_sorter(req.prefer, req.rank) or nil,
     done = done,
   }, req.entries, function(bufnr)
     actions.select_default:replace(function()
