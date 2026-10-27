@@ -4,8 +4,8 @@
 -- toggle leaves the job running, manually closing the window ends it, and
 -- closing the last tab of the worktree kills the job and its process tree. See docs/specs/0001-persistent-worktree-terminal.md.
 local shell = require("config.terminal.shell")
-local worktree = require("config.worktree")
-local worktree_tabs = require("config.worktree_tabs")
+local worktree = require("config.git.worktree.identity")
+local worktree_tabs = require("config.git.worktree.tabs")
 
 local M = {}
 

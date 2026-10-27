@@ -4,7 +4,7 @@
 -- have moved HEAD, so a switch/checkout made through the picker shows up
 -- immediately instead of waiting on the DirChanged/FocusGained autocmd below
 -- (which only catches branch changes made outside this nvim instance).
-local worktree = require('config.worktree')
+local worktree = require('config.git.worktree.identity')
 
 local M = {}
 

@@ -4,9 +4,9 @@ return {
     enabled = true,
     config = function()
       local statusline = require 'mini.statusline'
-      local worktree = require 'config.worktree'
-      local git_busy = require 'config.git_busy'
-      local branch_cache = require 'config.branch_cache'
+      local worktree = require 'config.git.worktree.identity'
+      local git_busy = require 'config.git.busy'
+      local branch_cache = require 'config.git.branch.cache'
 
       -- Solid-background look, one group per palette slot so the statusline
       -- indicator matches whatever color the tabline assigned that
