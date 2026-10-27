@@ -40,7 +40,7 @@ diagnostic-gated `<M-CR>` quickfix nor the `source.addMissingImports.ts`
 source action used by `<M-o>` had anything to compute a fix from — one root
 cause behind both symptoms.
 
-**Root cause of the React-import restore failure:** `<M-o>` sequenced
+**Root cause of the React-import restore failure:** `<M-o>` (now `organize_imports` in `lua/config/lsp/actions.lua`) sequenced
 `source.organizeImports` → restore-check → `source.addMissingImports.ts` →
 format using fixed `vim.defer_fn(..., 200)` timers between steps, rather than
 waiting for each edit to actually land. If an edit round-trip (request →
