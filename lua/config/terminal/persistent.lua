@@ -5,6 +5,7 @@
 -- closing the last tab of the worktree kills the job and its process tree. See docs/specs/0001-persistent-worktree-terminal.md.
 local shell = require("config.terminal.shell")
 local worktree = require("config.git.worktree.identity")
+local repo = require("config.git.repo")
 local worktree_tabs = require("config.git.worktree.tabs")
 
 local M = {}
@@ -29,11 +30,11 @@ local function worktree_key(cwd)
   return normalize(vim.fs.root(cwd, ".git") or cwd)
 end
 
--- Human-readable name for a key (winbar text and colour slot). branch_for_cwd
+-- Human-readable name for a key (winbar text and colour slot). branch_for_dir
 -- works for any git dir; label_for_cwd only recognizes this config's own
 -- worktree layout; the key itself is the last resort.
 local function display_name(key)
-  return worktree.branch_for_cwd(key) or worktree.label_for_cwd(key) or key
+  return repo.branch_for_dir(key) or worktree.label_for_cwd(key) or key
 end
 
 local function current_key()
