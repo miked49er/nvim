@@ -2,7 +2,8 @@
 -- Real git repos in a temp dir (bare "origin" + clones); no mocks.
 
 local repo_root = vim.fn.getcwd()
-package.path = repo_root .. "/lua/?.lua;" .. repo_root .. "/lua/?/init.lua;" .. package.path
+package.path = repo_root .. "/?.lua;" .. repo_root .. "/lua/?.lua;" .. repo_root .. "/lua/?/init.lua;" .. package.path
+local tmp = require("tests.support.tmp")
 package.loaded["config.git.branch.cache"] = { invalidate = function() end }
 local sync = require("config.git.branch.base_sync")
 
@@ -22,14 +23,13 @@ local function sh(cwd, ...)
   return vim.trim(r.stdout)
 end
 
-local tmp = vim.fn.tempname()
-vim.fn.mkdir(tmp, "p")
+local tmp_root = tmp.dir()
 local n = 0
 -- Returns clone dir, other (pusher) dir, scenario dir. origin has main with c1;
 -- `me` clones it; then `other` pushes c2, so me's main is one commit behind.
 local function scenario()
   n = n + 1
-  local d = tmp .. "/s" .. n
+  local d = tmp_root .. "/s" .. n
   vim.fn.mkdir(d, "p")
   sh(d, "init", "--bare", "-b", "main", "origin.git")
   local function clone(name)
@@ -111,7 +111,7 @@ end
 print("fetch fails")
 do
   local me = scenario()
-  sh(me, "remote", "set-url", "origin", tmp .. "/nonexistent.git")
+  sh(me, "remote", "set-url", "origin", tmp_root .. "/nonexistent.git")
   local r = run(me, "main")
   check("falls back to local base", r.ref == "main")
   check("warns", type(r.warning) == "string" and r.warning:find("behind") ~= nil)
@@ -137,9 +137,10 @@ do
 end
 
 vim.fn.chdir(repo_root)
-vim.fn.delete(tmp, "rf")
+tmp.cleanup()
 if #failures > 0 then
   print(#failures .. " failure(s)")
   os.exit(1)
 end
 print("all passed")
+tmp.exit(0)

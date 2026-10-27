@@ -1,6 +1,7 @@
 -- Run with: nvim --headless -l tests/git/worktree/tabs_spec.lua
 local repo_root = vim.fn.getcwd()
-package.path = repo_root .. "/lua/?.lua;" .. repo_root .. "/lua/?/init.lua;" .. package.path
+package.path = repo_root .. "/?.lua;" .. repo_root .. "/lua/?.lua;" .. repo_root .. "/lua/?/init.lua;" .. package.path
+local tmp = require("tests.support.tmp")
 
 local failures = {}
 local function check(name, ok)
@@ -9,7 +10,7 @@ local function check(name, ok)
 end
 
 local tabs = require("config.git.worktree.tabs")
-local base = vim.fn.tempname()
+local base = tmp.dir()
 local function dir(n) local p = base .. "/" .. n; vim.fn.mkdir(p, "p"); return p end
 local a, b, c = dir("a"), dir("b"), dir("c")
 
@@ -42,5 +43,6 @@ local ok3 = pcall(tabs.close_for_cwd, c)
 check("closing last matching tab does not error", ok3)
 check("never closes the last remaining tab", #vim.api.nvim_list_tabpages() >= 1)
 
-if #failures > 0 then os.exit(1) end
+if #failures > 0 then tmp.exit(1) end
 print("all passed")
+tmp.exit(0)
