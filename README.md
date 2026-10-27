@@ -72,11 +72,9 @@ The following language servers are configured and will auto-install via [Mason](
 
 ## Keybindings
 
-- `<space><space>x` — Source current file
-- `<leader>x` — Execute current line as Lua (normal mode)
-- `<leader>x` — Execute selection as Lua (visual mode)
-- `<M-CR>` — Show LSP code actions
-- `yap` — Highlight when yanking text
+All mappings live in one table per area under `lua/config/keymaps/`
+(`editor`, `lsp`, `git`, `terminal`, `telescope`, ...), loaded by
+`keymaps/init.lua`. Read those files for the full list.
 
 ## Configuration Structure
 
@@ -85,7 +83,13 @@ nvim/
 ├── init.lua                  # Entry point
 ├── lua/
 │   ├── config/
-│   │   └── lazy.lua         # lazy.nvim bootstrap
+│   │   ├── lazy.lua         # lazy.nvim bootstrap
+│   │   ├── keymaps/         # central keymap tables + loader
+│   │   ├── git/             # repo, branch/ (ops, picker), worktree/ (identity, remove, tabs)
+│   │   ├── lsp/             # LSP actions (organize imports, folds, hints)
+│   │   ├── terminal/        # persistent per-worktree terminal
+│   │   ├── ui/              # menu, palette
+│   │   └── telescope/       # Telescope helpers
 │   └── plugins/
 │       ├── lsp.lua          # LSP configuration
 │       ├── treesitter.lua   # Syntax highlighting

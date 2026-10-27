@@ -17,10 +17,6 @@ local DEFAULT_FRAC = 0.3
 -- worktree path -> { buf, win, job, side, frac, toggling }
 local state = {}
 
-local function normalize(path)
-  return (vim.fs.normalize(path):gsub("/+$", ""))
-end
-
 -- The key identifies the worktree itself: its normalized root directory
 -- (nearest ancestor holding `.git`, a dir for the main checkout or a file
 -- for a linked worktree). It is independent of the checked-out branch, so
