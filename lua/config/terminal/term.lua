@@ -9,8 +9,10 @@ vim.api.nvim_create_autocmd("TermOpen", {
   end,
 })
 
+local M = {}
+
 local job_id = 0
-vim.keymap.set("n", "<leader>st", function()
+function M.open_shell_split()
   vim.cmd.vnew()
 
   job_id = shell.open()
@@ -21,16 +23,12 @@ vim.keymap.set("n", "<leader>st", function()
 
   vim.cmd.wincmd("J")
   vim.api.nvim_win_set_height(0, 15)
-end)
-
-vim.keymap.set("t", "<Esc><Esc>", [[<C-\><C-n>]], {
-  noremap = true,
-  silent = true,
-  desc = "Exit terminal mode",
-})
+end
 
 --vim.keymap.set("n", "<leader>example", function()
 -- make
 -- go build, go test ./asdf
 --vim.fn.chansend(job_id, { "echo 'Hello World'\r\n" })
 --end)
+
+return M
