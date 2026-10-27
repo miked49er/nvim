@@ -85,7 +85,7 @@ nvim/
 │   ├── config/
 │   │   ├── lazy.lua         # lazy.nvim bootstrap
 │   │   ├── keymaps/         # central keymap tables + loader
-│   │   ├── git/             # repo, branch/ (ops, picker), worktree/ (identity, remove, tabs)
+│   │   ├── git/             # repo, branch/ (ops, picker + picker/: context, actions, menus, screens), worktree/ (identity, remove, tabs)
 │   │   ├── lsp/             # LSP actions (organize imports, folds, hints)
 │   │   ├── terminal/        # persistent per-worktree terminal
 │   │   ├── ui/              # menu, palette
