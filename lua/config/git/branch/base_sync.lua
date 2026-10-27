@@ -11,7 +11,7 @@
 -- tracking e.g. "upstream" is synced from there), else "origin".
 -- Remote-tracking bases ("origin/main") are fetched, then passed through.
 -- Other bases (tags, HEAD) pass through untouched.
-local branch_cache = require("config.branch_cache")
+local branch_cache = require("config.git.branch.cache")
 
 local M = {}
 

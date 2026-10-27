@@ -7,12 +7,12 @@ local conf = require("telescope.config").values
 local actions = require("telescope.actions")
 local action_state = require("telescope.actions.state")
 local themes = require("telescope.themes")
-local menu_stack = require("config.telescope.menu_stack")
-local worktree = require("config.worktree")
-local git_busy = require("config.git_busy")
-local branch_cache = require("config.branch_cache")
-local git_base_sync = require("config.git_base_sync")
-local batch_remove = require("config.worktree_batch_remove")
+local menu_stack = require("config.ui.menu")
+local worktree = require("config.git.worktree.identity")
+local git_busy = require("config.git.busy")
+local branch_cache = require("config.git.branch.cache")
+local git_base_sync = require("config.git.branch.base_sync")
+local batch_remove = require("config.git.worktree.remove")
 
 local M = {}
 
@@ -468,7 +468,7 @@ end
 local function finish_worktree_removal(wt)
   vim.notify("Removed worktree " .. wt.path)
   -- Tab cleanup must never abort the caller's on_done (batch removal).
-  pcall(require("config.worktree_tabs").close_for_cwd, wt.path)
+  pcall(require("config.git.worktree.tabs").close_for_cwd, wt.path)
 end
 
 -- Async: on_done(result) runs whether or not the removal succeeded; success
@@ -637,7 +637,7 @@ local function remove_worktree_action()
       end
       confirm_picker("Remove " .. #selected .. " worktrees: " .. table.concat(names, ", ") .. "?", function()
         -- Decisions first, removals second: nothing is removed until every
-        -- dirty-worktree prompt is answered (see config.worktree_batch_remove).
+        -- dirty-worktree prompt is answered (see config.git.worktree.remove).
         local busy = false
         batch_remove.run(selected, {
           review = function(wt, entries, cb)
