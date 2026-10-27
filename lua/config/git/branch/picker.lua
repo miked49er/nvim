@@ -12,6 +12,7 @@ local worktree = require("config.git.worktree.identity")
 local repo = require("config.git.repo")
 local git_base_sync = require("config.git.branch.base_sync")
 local batch_remove = require("config.git.worktree.remove")
+local remove_adapter = require("config.git.worktree.remove_adapter.telescope")
 
 local M = {}
 
@@ -42,10 +43,6 @@ local function git_async(args, on_done)
     end)
   end
   h:run_async(args, on_done)
-end
-
-local function is_locked_failure(result)
-  return (result.stderr or ""):find("cannot remove a locked working tree", 1, true) ~= nil
 end
 
 local function git_lines(args)
@@ -427,204 +424,43 @@ local function create_worktree_for_branch(entry)
   open_worktree_tab(path)
 end
 
-local function finish_worktree_removal(wt)
-  vim.notify("Removed worktree " .. wt.path)
-  -- Tab cleanup must never abort the caller's on_done (batch removal).
-  pcall(require("config.git.worktree.tabs").close_for_cwd, wt.path)
-end
-
--- Async: on_done(result) runs whether or not the removal succeeded; success
--- notification + tab cleanup fire here since every caller wants them.
-local function remove_worktree_async(wt, on_done, force)
-  local args = { "worktree", "remove" }
-  if force then
-    table.insert(args, "--force")
+-- Reports a removal result: notifications live here, removal itself lives in
+-- config.git.worktree.remove.
+local function report_removal(res)
+  for _, wt in ipairs(res.removed) do
+    vim.notify("Removed " .. (wt.orphan and "worktree folder " or "worktree ") .. wt.path)
   end
-  table.insert(args, wt.path)
-  git_async(args, function(result)
-    if result.code == 0 then
-      finish_worktree_removal(wt)
-    end
-    on_done(result)
-  end)
-end
-
--- Scrollable list of a dirty worktree's changes (status code + full relative
--- path from `git status --porcelain`) with a diff/file previewer.
--- <CR> confirms the force removal; <C-s> skips (only when opts.allow_skip);
--- <Esc>/<C-c> cancels. on_result(RESULT.FORCE | RESULT.SKIP | nil for cancel) runs once.
-local function changes_confirm_picker(wt, entries, opts, on_result)
-  opts = opts or {}
-  local previewers = require("telescope.previewers")
-  local finished = false
-  local function resolve(result)
-    if finished then
-      return
-    end
-    finished = true
-    on_result(result)
+  for _, f in ipairs(res.failed) do
+    notify_err(f.wt.orphan and "Folder removal failed" or "git worktree remove failed", f.result)
   end
-  local hint = opts.allow_skip and "<CR> force remove, <C-s> skip, <Esc> cancel" or "<CR> force remove, <Esc> cancel"
-  pickers
-      .new({ layout_strategy = "horizontal", layout_config = { width = 0.9, height = 0.8 } }, {
-        prompt_title = "Force remove " .. vim.fs.basename(wt.path) .. "? " .. hint,
-        finder = finders.new_table({
-          results = entries,
-          entry_maker = function(e)
-            local display = string.format("%-2s %s", e.status, e.path)
-            return {
-              value = e,
-              display = display,
-              ordinal = e.status .. " " .. e.path,
-              path = vim.fs.joinpath(wt.path, e.path),
-            }
-          end,
-        }),
-        sorter = conf.generic_sorter({}),
-        previewer = previewers.new_buffer_previewer({
-          title = "Change",
-          define_preview = function(self, entry)
-            local e = entry.value
-            local lines
-            if e.status == batch_remove.UNTRACKED then
-              local ok, content = pcall(vim.fn.readfile, entry.path)
-              lines = ok and content or { "(unreadable or directory)" }
-            else
-              -- Async so scrolling the list never blocks on git.
-              local bufnr = self.state.bufnr
-              vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, { "(loading diff...)" })
-              repo.open_async(wt.path, function(h)
-                if not h then
-                  return
-                end
-                h:run_async({ "diff", "HEAD", "--", e.path }, function(r)
-                  if not vim.api.nvim_buf_is_valid(bufnr) then
-                    return
-                  end
-                  vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, vim.split(r.stdout or "", "\n"))
-                  vim.bo[bufnr].filetype = "diff"
-                end)
-              end)
-              return
-            end
-            vim.api.nvim_buf_set_lines(self.state.bufnr, 0, -1, false, lines)
-            vim.bo[self.state.bufnr].filetype = ""
-          end,
-        }),
-        attach_mappings = function(prompt_bufnr, map)
-          actions.select_default:replace(function()
-            actions.close(prompt_bufnr)
-            resolve(batch_remove.RESULT.FORCE)
-          end)
-          if opts.allow_skip then
-            map({ "i", "n" }, "<C-s>", function()
-              actions.close(prompt_bufnr)
-              resolve(batch_remove.RESULT.SKIP)
-            end)
-          end
-          map({ "i", "n" }, "<Esc>", function()
-            actions.close(prompt_bufnr)
-            resolve(nil)
-          end)
-          map({ "i", "n" }, "<C-c>", function()
-            actions.close(prompt_bufnr)
-            resolve(nil)
-          end)
-          return true
-        end,
-      })
-      :find()
 end
 
-local function confirm_force_remove(wt, on_done)
-  batch_remove.changes_summary_async(wt, function(entries)
-    local function force_remove()
-      local busy = repo.busy.start("removing worktree")
-      remove_worktree_async(wt, function(result)
-        repo.busy.stop(busy)
-        if result.code ~= 0 then
-          notify_err("git worktree remove failed", result)
-        end
-        if on_done then
-          on_done()
-        end
-      end, true)
-    end
-    if #entries == 0 then
-      return confirm_picker(wt.path .. " has no listed changes. Force remove?", force_remove)
-    end
-    changes_confirm_picker(wt, entries, { allow_skip = false }, function(result)
-      if result == batch_remove.RESULT.FORCE then
-        force_remove()
-      end
-    end)
-  end)
+local function run_removal(selection)
+  batch_remove.run(selection, remove_adapter, report_removal)
 end
 
 local function remove_worktree_action()
-  local open_list
-  open_list = function()
-    local worktrees = vim.tbl_filter(function(wt)
-      return not wt.is_main
-    end, list_worktrees_ordered())
+  local worktrees = vim.tbl_filter(function(wt)
+    return not wt.is_main
+  end, list_worktrees_ordered())
 
-    pick_entries_multi("Remove Worktree", worktrees, function(wt)
-      local name = vim.fs.basename(wt.path)
-      return { value = wt, display = name, ordinal = name }
-    end, function(selected)
-      -- Single selection offers the interactive force-remove prompt, but only
-      -- for the "has uncommitted changes" failure: a locked worktree is
-      -- usually locked on purpose, so that failure is reported and left
-      -- alone rather than offered a force-retry. Batch removal checks all
-      -- worktrees and collects every decision before removing any.
-      if #selected == 1 then
-        local wt = selected[1]
-        confirm_picker("Remove worktree at " .. wt.path .. "?", function()
-          local busy = repo.busy.start("removing worktree")
-          remove_worktree_async(wt, function(result)
-            repo.busy.stop(busy)
-            if result.code == 0 then
-              return
-            end
-            notify_err("git worktree remove failed", result)
-            if is_locked_failure(result) then
-              return
-            end
-            confirm_force_remove(wt)
-          end)
-        end)
-        return
-      end
-
-      local names = {}
-      for _, wt in ipairs(selected) do
-        table.insert(names, vim.fs.basename(wt.path))
-      end
-      confirm_picker("Remove " .. #selected .. " worktrees: " .. table.concat(names, ", ") .. "?", function()
-        -- Decisions first, removals second: nothing is removed until every
-        -- dirty-worktree prompt is answered (see config.git.worktree.remove).
-        local busy
-        batch_remove.run(selected, {
-          review = function(wt, entries, cb)
-            changes_confirm_picker(wt, entries, { allow_skip = true }, cb)
-          end,
-          remove = function(wt, force, on_done)
-            busy = busy or repo.busy.start("removing " .. #selected .. " worktrees")
-            remove_worktree_async(wt, on_done, force)
-          end,
-          on_failure = function(_, result)
-            notify_err("git worktree remove failed", result)
-          end,
-          done = function()
-            if busy then
-              repo.busy.stop(busy)
-            end
-          end,
-        })
+  pick_entries_multi("Remove Worktree", worktrees, function(wt)
+    local name = vim.fs.basename(wt.path)
+    return { value = wt, display = name, ordinal = name }
+  end, function(selected)
+    if #selected == 1 then
+      return confirm_picker("Remove worktree at " .. selected[1].path .. "?", function()
+        run_removal(selected)
       end)
+    end
+    local names = {}
+    for _, wt in ipairs(selected) do
+      table.insert(names, vim.fs.basename(wt.path))
+    end
+    confirm_picker("Remove " .. #selected .. " worktrees: " .. table.concat(names, ", ") .. "?", function()
+      run_removal(selected)
     end)
-  end
-  open_list()
+  end)
 end
 
 -- Folders under .claude/worktrees/ that `git worktree list` no longer knows
@@ -650,85 +486,11 @@ local function list_orphan_worktree_folders()
     if kind == "directory" then
       local path = vim.fs.joinpath(base, name)
       if not active[vim.fs.normalize(path)] then
-        table.insert(orphans, { path = path })
+        table.insert(orphans, { path = path, orphan = true })
       end
     end
   end
   return orphans
-end
-
--- Async: on_done(is_dirty, summary). "Dirty" means `git status` inside the
--- folder reports changes, or the command couldn't run at all -- e.g. the
--- worktree admin entry behind this folder's .git file is already gone, so
--- there's no git state to say the folder is safe to drop silently. In that
--- fallback case the summary lists the folder's top-level files instead.
-local function orphan_dirty_summary_async(path, on_done)
-  repo.open_async(path, function(h)
-    if not h then
-      local names = {}
-      local ok, iter = pcall(vim.fs.dir, path)
-      if ok then
-        for name, kind in iter do
-          if kind ~= "directory" then
-            table.insert(names, name)
-          end
-        end
-      end
-      on_done(true, batch_remove.summarize_names(names))
-      return
-    end
-    h:status_async(function(entries)
-      local names = {}
-      for _, e in ipairs(entries) do
-        table.insert(names, vim.fs.basename(e.path))
-      end
-      on_done(#names > 0, batch_remove.summarize_names(names))
-    end)
-  end)
-end
-
-local function remove_orphan_folder(path)
-  return vim.fn.delete(path, "rf") == 0
-end
-
--- Follow-up for a batch prune's dirty folders: one prompt to force them all,
--- review them one at a time, or leave them.
-local function resolve_dirty_orphans(dirty)
-  local summaries = {}
-  for _, o in ipairs(dirty) do
-    table.insert(summaries, vim.fs.basename(o.path) .. (o.summary ~= "" and (" (" .. o.summary .. ")") or ""))
-  end
-  local force_all = "Force remove all"
-  local one_by_one = "Review one by one"
-  local skip = "Skip"
-  vim.ui.select({ force_all, one_by_one, skip }, {
-    prompt = #dirty .. " folder(s) have changes: " .. table.concat(summaries, "; "),
-  }, function(choice)
-    if choice == force_all then
-      for _, o in ipairs(dirty) do
-        if not remove_orphan_folder(o.path) then
-          vim.notify("Failed to remove " .. o.path, vim.log.levels.ERROR)
-        end
-      end
-    elseif choice == one_by_one then
-      local idx = 0
-      local function next_one()
-        idx = idx + 1
-        local o = dirty[idx]
-        if not o then
-          return
-        end
-        local detail = o.summary ~= "" and (" (" .. o.summary .. ")") or ""
-        confirm_picker(o.path .. " has changes" .. detail .. ". Force remove?", function()
-          if not remove_orphan_folder(o.path) then
-            vim.notify("Failed to remove " .. o.path, vim.log.levels.ERROR)
-          end
-          next_one()
-        end)
-      end
-      next_one()
-    end
-  end)
 end
 
 local function prune_worktree_folders_action()
@@ -781,21 +543,7 @@ local function prune_worktree_folders_action()
             end
             confirm_picker("Prune " .. #selected .. " worktree folder(s): " .. table.concat(names, ", ") .. "?",
               function()
-                local dirty = {}
-                local remaining = #selected
-                for _, o in ipairs(selected) do
-                  orphan_dirty_summary_async(o.path, function(is_dirty, summary)
-                    if is_dirty then
-                      table.insert(dirty, { path = o.path, summary = summary })
-                    elseif not remove_orphan_folder(o.path) then
-                      vim.notify("Failed to remove " .. o.path, vim.log.levels.ERROR)
-                    end
-                    remaining = remaining - 1
-                    if remaining == 0 and #dirty > 0 then
-                      resolve_dirty_orphans(dirty)
-                    end
-                  end)
-                end
+                run_removal(selected)
               end)
           end)
           menu_stack.attach_back(map, prompt_bufnr)

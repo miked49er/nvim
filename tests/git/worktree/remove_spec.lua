@@ -1,9 +1,12 @@
 -- Run with: nvim --headless -l tests/git/worktree/remove_spec.lua
--- Real git repo + worktrees; only the prompt (vim.ui.select) is scripted.
+-- Real git repo + worktrees; prompts are answered by the scripted adapter.
 local repo_root = vim.fn.getcwd()
 package.path = repo_root .. "/?.lua;" .. repo_root .. "/lua/?.lua;" .. repo_root .. "/lua/?/init.lua;" .. package.path
 local tmp = require("tests.support.tmp")
-local batch = require("config.git.worktree.remove")
+local remove = require("config.git.worktree.remove")
+local scripted = require("config.git.worktree.remove_adapter.scripted")
+local repo = require("config.git.repo")
+local P, R = remove.POLICY, remove.RESULT
 
 local failures = {}
 local function check(name, ok, detail)
@@ -40,93 +43,146 @@ local function scenario(specs)
   return main, wts
 end
 
--- script: successive vim.ui.select answers ("<cancel>" = dismiss). Records, at
--- each prompt, how many worktrees still exist.
-local function run(wts, script)
-  local prompts, existing_at_prompt, finished = {}, {}, false
-  local i = 0
-  local orig = vim.ui.select
-  vim.ui.select = function(items, opts, cb)
-    i = i + 1
-    prompts[#prompts + 1] = { items = items, prompt = opts.prompt }
-    local alive = 0
-    for _, w in ipairs(wts) do
-      if vim.uv.fs_stat(w.path) then alive = alive + 1 end
-    end
-    existing_at_prompt[#existing_at_prompt + 1] = alive
-    local ans = script[i]
-    if ans == "<cancel>" or ans == nil then return cb(nil, nil) end
-    for idx, it in ipairs(items) do
-      if it == ans then return cb(it, idx) end
-    end
-    error("no such choice: " .. tostring(ans))
-  end
-  batch.run(wts, {
-    remove = function(wt, force, on_done)
-      local args = { "git", "worktree", "remove" }
-      if force then table.insert(args, "--force") end
-      table.insert(args, wt.path)
-      vim.system(args, { text = true }, function(r) vim.schedule(function() on_done(r) end) end)
-    end,
-    done = function() finished = true end,
-  })
-  vim.wait(10000, function() return finished end, 20)
-  vim.ui.select = orig
-  return prompts, existing_at_prompt, finished
+local function exists(w) return vim.uv.fs_stat(w.path) ~= nil end
+
+local function count_alive(wts)
+  local alive = 0
+  for _, w in ipairs(wts) do if exists(w) then alive = alive + 1 end end
+  return alive
 end
 
-local function exists(w) return vim.uv.fs_stat(w.path) ~= nil end
+-- Runs remove.run with a scripted adapter. Returns result, adapter, and the
+-- number of surviving selected items seen at each prompt.
+local function run(sel, script)
+  script = script or {}
+  local alive = {}
+  script.on_prompt = function() alive[#alive + 1] = count_alive(sel) end
+  local adapter = scripted.new(script)
+  local res
+  remove.run(sel, adapter, function(r) res = r end)
+  vim.wait(10000, function() return res ~= nil end, 20)
+  return res, adapter, alive
+end
+
+local function has(list, w)
+  for _, x in ipairs(list) do
+    if (x.wt or x) == w then return true end
+  end
+  return false
+end
 
 print("clean only: no prompts, all removed")
 do
   local _, wts = scenario({ { "a" }, { "b" } })
-  local prompts, _, fin = run(wts, {})
-  check("finished", fin)
-  check("no prompts", #prompts == 0)
+  local res, ad = run(wts)
+  check("finished", res ~= nil)
+  check("no prompts", #ad.policies == 0 and #ad.confirms == 0)
   check("all removed", not exists(wts[1]) and not exists(wts[2]))
+  check("result lists both removed", #res.removed == 2 and #res.failed == 0 and #res.skipped == 0)
+  local label = repo.busy.label()
+  check("busy cleared", label == nil or label == "", tostring(label))
 end
 
 print("mixed + force all: nothing removed before prompt")
 do
   local _, wts = scenario({ { "a" }, { "b", true }, { "c", true } })
-  local prompts, alive = run(wts, { "Force remove all" })
-  check("one prompt", #prompts == 1)
+  local res, ad, alive = run(wts, { policy = P.FORCE_ALL })
+  check("one prompt", #ad.policies == 1)
+  check("policy sees only dirty", #ad.policies[1] == 2)
   check("all 3 still present at prompt", alive[1] == 3, tostring(alive[1]))
-  check("all removed after", not exists(wts[1]) and not exists(wts[2]) and not exists(wts[3]))
+  check("all removed after", count_alive(wts) == 0)
+  check("3 removed", #res.removed == 3)
 end
 
-print("cancel at first prompt removes nothing")
+print("cancel at policy prompt removes nothing")
 do
   local _, wts = scenario({ { "a" }, { "b", true } })
-  local _, _, fin = run(wts, { "<cancel>" })
-  check("finished", fin)
+  local res = run(wts, {})
+  check("cancelled", res.cancelled)
   check("nothing removed", exists(wts[1]) and exists(wts[2]))
+  check("empty lists", #res.removed == 0 and #res.skipped == 0)
 end
 
-print("skip: clean removed, dirty intact")
+print("skip: clean removed, dirty intact and reported skipped")
 do
   local _, wts = scenario({ { "a" }, { "b", true } })
-  run(wts, { "Skip" })
+  local res = run(wts, { policy = P.SKIP })
   check("clean removed", not exists(wts[1]))
   check("dirty kept", exists(wts[2]))
+  check("reported", has(res.removed, wts[1]) and has(res.skipped, wts[2]))
 end
 
 print("review one by one: decisions all collected before any removal")
 do
   local _, wts = scenario({ { "a" }, { "b", true }, { "c", true } })
-  local prompts, alive = run(wts, { "Review one by one", "Force remove", "Skip" })
-  check("3 prompts", #prompts == 3, tostring(#prompts))
+  local res, ad, alive = run(wts, { policy = P.REVIEW, confirms = { R.FORCE, R.SKIP } })
+  check("1 policy + 2 confirms", #ad.policies == 1 and #ad.confirms == 2)
   check("all present at every prompt", alive[1] == 3 and alive[2] == 3 and alive[3] == 3, vim.inspect(alive))
+  check("confirm gets entries",
+    ad.confirms[1].entries[1].status == "??" and ad.confirms[1].entries[1].path == "dirty.txt")
+  check("skip allowed in batch", ad.confirms[1].opts.allow_skip == true)
   check("clean removed", not exists(wts[1]))
   check("forced removed", not exists(wts[2]))
   check("skipped kept", exists(wts[3]))
+  check("result", #res.removed == 2 and #res.skipped == 1 and has(res.skipped, wts[3]))
 end
 
 print("cancel during review removes nothing")
 do
   local _, wts = scenario({ { "a" }, { "b", true }, { "c", true } })
-  run(wts, { "Review one by one", "Force remove", "<cancel>" })
-  check("nothing removed", exists(wts[1]) and exists(wts[2]) and exists(wts[3]))
+  local res = run(wts, { policy = P.REVIEW, confirms = { R.FORCE } })
+  check("cancelled", res.cancelled)
+  check("nothing removed", count_alive(wts) == 3)
+end
+
+print("single dirty worktree: straight to confirm, no skip option")
+do
+  local _, wts = scenario({ { "b", true } })
+  local res, ad = run(wts, { confirms = { R.FORCE } })
+  check("no policy prompt", #ad.policies == 0)
+  check("one confirm without skip", #ad.confirms == 1 and ad.confirms[1].opts.allow_skip == false)
+  check("removed", not exists(wts[1]) and #res.removed == 1)
+  local _, w2 = scenario({ { "d", true } })
+  local r2 = run(w2, {})
+  check("cancel keeps it", r2.cancelled and exists(w2[1]))
+end
+
+print("locked dirty worktree is not offered force; failure is reported")
+do
+  local _, wts = scenario({ { "a" }, { "b", true } })
+  sh(wts[2].path, "worktree", "lock", wts[2].path)
+  local res, ad = run(wts, {})
+  check("no prompt offered", #ad.policies == 0 and #ad.confirms == 0)
+  check("clean removed", not exists(wts[1]))
+  check("locked kept", exists(wts[2]))
+  check("failure reported", #res.failed == 1 and res.failed[1].wt == wts[2]
+    and res.failed[1].result.stderr:find("locked", 1, true) ~= nil, vim.inspect(res.failed))
+end
+
+print("single locked worktree gets the same handling")
+do
+  local _, wts = scenario({ { "b", true } })
+  sh(wts[1].path, "worktree", "lock", wts[1].path)
+  local res, ad = run(wts, {})
+  check("no prompts", #ad.confirms == 0)
+  check("failed, still present", #res.failed == 1 and exists(wts[1]))
+end
+
+print("orphan folders go through the same flow")
+do
+  local main, wts = scenario({ { "a" } })
+  local dirty = { path = main .. "/orph_dirty", orphan = true }
+  vim.fn.mkdir(dirty.path, "p")
+  vim.fn.writefile({ "x" }, dirty.path .. "/keep.txt")
+  -- Not its own checkout, so there is no git state saying it is safe: dirty.
+  local res, ad = run({ wts[1], dirty }, { policy = P.SKIP })
+  check("dirty orphan prompts via policy", #ad.policies == 1)
+  check("dirty orphan lists its files",
+    ad.policies[1][1].entries[1] and ad.policies[1][1].entries[1].path == "keep.txt", vim.inspect(ad.policies))
+  check("dirty orphan kept on skip", exists(dirty) and has(res.skipped, dirty))
+  check("worktree removed", not exists(wts[1]))
+  local res2 = run({ dirty }, { confirms = { R.FORCE } })
+  check("force removes orphan folder", not exists(dirty) and has(res2.removed, dirty))
 end
 
 print("changes_summary_async returns status + full relative path entries")
@@ -137,83 +193,11 @@ do
   vim.fn.writefile({ "x" }, wts[1].path .. "/top.txt")
   sh(wts[1].path, "add", "sub/new.txt")
   local got
-  batch.changes_summary_async(wts[1], function(e) got = e end)
+  remove.changes_summary_async(wts[1], function(e) got = e end)
   vim.wait(5000, function() return got ~= nil end, 20)
   check("two entries", got and #got == 2, vim.inspect(got))
-  check("added file with nested path",
-    got and got[1].status == "A" and got[1].path == "sub/new.txt", vim.inspect(got))
+  check("added file with nested path", got and got[1].status == "A" and got[1].path == "sub/new.txt", vim.inspect(got))
   check("untracked top-level file", got and got[2].status == "??" and got[2].path == "top.txt", vim.inspect(got))
-  local _, cw = scenario({ { "c2" } })
-  local c
-  batch.changes_summary_async(cw[1], function(e) c = e end)
-  vim.wait(5000, function() return c ~= nil end, 20)
-  check("clean is empty list", c and #c == 0, vim.inspect(c))
-end
-
-print("review one by one uses deps.review with entries instead of vim.ui.select")
-do
-  local _, wts = scenario({ { "b", true }, { "c", true } })
-  local seen, finished = {}, false
-  local answers = { "force", "skip" }
-  local orig = vim.ui.select
-  local selects = 0
-  vim.ui.select = function(items, opts, cb)
-    selects = selects + 1
-    if selects == 1 then return cb("Review one by one", 2) end
-    error("unexpected select")
-  end
-  batch.run(wts, {
-    remove = function(wt, force, on_done)
-      local args = { "git", "worktree", "remove" }
-      if force then table.insert(args, "--force") end
-      table.insert(args, wt.path)
-      vim.system(args, { text = true }, function(r) vim.schedule(function() on_done(r) end) end)
-    end,
-    review = function(wt, entries, cb)
-      seen[#seen + 1] = { wt = wt, entries = entries }
-      cb(answers[#seen])
-    end,
-    done = function() finished = true end,
-  })
-  vim.wait(10000, function() return finished end, 20)
-  vim.ui.select = orig
-  check("finished", finished)
-  check("review called per dirty worktree", #seen == 2)
-  check("entries passed", seen[1] and seen[1].entries[1].status == "??" and seen[1].entries[1].path == "dirty.txt",
-    vim.inspect(seen[1]))
-  check("forced removed", not exists(wts[1]))
-  check("skipped kept", exists(wts[2]))
-end
-
-print("locked dirty worktree is not offered force removal; failure is reported")
-do
-  local _, wts = scenario({ { "a" }, { "b", true } })
-  sh(wts[2].path, "worktree", "lock", wts[2].path)
-  local prompts, _, fin = run(wts, {})
-  check("finished", fin)
-  check("no prompt offered", #prompts == 0, vim.inspect(prompts))
-  check("clean removed", not exists(wts[1]))
-  check("locked kept", exists(wts[2]))
-end
-
-print("locked worktree failure is passed to on_failure")
-do
-  local _, wts = scenario({ { "b", true } })
-  sh(wts[1].path, "worktree", "lock", wts[1].path)
-  local fails, finished = {}, false
-  batch.run(wts, {
-    remove = function(wt, force, on_done)
-      local args = { "git", "worktree", "remove" }
-      if force then table.insert(args, "--force") end
-      table.insert(args, wt.path)
-      vim.system(args, { text = true }, function(r) vim.schedule(function() on_done(r) end) end)
-    end,
-    on_failure = function(_, r) fails[#fails + 1] = r.stderr end,
-    done = function() finished = true end,
-  })
-  vim.wait(10000, function() return finished end, 20)
-  check("one failure reported", #fails == 1 and fails[1]:find("locked", 1, true) ~= nil, vim.inspect(fails))
-  check("still present", exists(wts[1]))
 end
 
 vim.fn.chdir(repo_root)
