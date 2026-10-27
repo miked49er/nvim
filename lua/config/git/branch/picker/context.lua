@@ -5,6 +5,9 @@ local repo = require("config.git.repo")
 
 local M = {}
 
+-- Highlight group for worktree entries in the picker (defined in picker.lua).
+M.WORKTREE_HL = "GitBranchWorktree"
+
 M.NOT_A_REPO = { ok = false, err = "fatal: not a git repository" }
 
 -- A repo handle is opened per call for the current directory; nil outside a

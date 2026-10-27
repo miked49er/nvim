@@ -4,7 +4,7 @@
 local menu = require("config.ui.menu")
 local menus = require("config.git.branch.picker.menus")
 local actions = require("config.git.branch.picker.actions")
-local switch_create = require("config.git.branch.picker.screens.switch_create")
+local ctx_mod = require("config.git.branch.picker.context")
 local palette = require("config.ui.palette")
 
 local M = {}
@@ -35,12 +35,14 @@ end
 M.push = actions.push
 M.pull = actions.pull
 
+local function define_picker_worktree_highlight()
+  vim.api.nvim_set_hl(0, ctx_mod.WORKTREE_HL, palette.HL)
+end
+
 M.setup = function()
   palette.define_now_and_on_colorscheme(
     "Re-derive git branch/worktree picker highlight for the new colorscheme",
-    function()
-      vim.api.nvim_set_hl(0, switch_create.WORKTREE_HL, palette.HL)
-    end
+    define_picker_worktree_highlight
   )
 end
 
