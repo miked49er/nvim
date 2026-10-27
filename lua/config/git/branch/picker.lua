@@ -361,6 +361,7 @@ local function switch_create(mode)
       title = mode == "branch" and "Switch/Create Branch" or "Switch/Create Worktree",
       items = entries.order(list_branches(), worktree_map),
       prefer = entries.prefers(worktree_map),
+      rank = entries.rank,
       entry = function(entry)
         local made = entries.describe(entry, worktree_map, mode)
         if made.worktree then
