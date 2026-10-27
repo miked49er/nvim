@@ -1,93 +1,57 @@
--- Worktrees always live at <repo_root>/.claude/worktrees/<name> (see
--- lua/config/telescope/git_branch.lua), so a cheap path match avoids
--- spawning git on every statusline/tabline redraw.
+-- Worktree identity: the single owner of the layout convention. Worktrees
+-- live at <main_repo_root>/.claude/worktrees/<sanitized branch name>.
+-- Also answers key / label / branch for a working directory, so tabs,
+-- terminals, tabline and the picker agree. Presentation (glyph, colors)
+-- lives in config.ui.palette. Path matching is cheap and spawns no git, so
+-- it is safe on every statusline/tabline redraw.
 local M = {}
 
-function M.label_for_cwd(cwd)
-  return cwd:match('%.claude[\\/]worktrees[\\/]([^\\/]+)')
+local BS = string.char(92)
+local SEP = "[" .. BS .. "/]"
+local SEGMENTS = { ".claude", "worktrees" }
+
+function M.sanitize(branch)
+  return (branch:gsub("/", "+"))
 end
 
--- Shared "this is a worktree" glyph for the git menu picker, tabline, and
--- statusline: nf-oct-repo_forked (U+F402) — a repo branched into a separate
--- working copy reads closer to "worktree" than a generic branch/tree glyph.
--- No trailing space baked in: callers join it against their own text so
--- spacing doesn't double up when a highlight-group switch sits in between.
-M.ICON = string.char(0xEF, 0x90, 0x82)
-
--- Named color (not a hex pulled from one colorscheme) so it stays electric
--- blue across theme changes. Foreground-only so it layers over a picker's
--- selection-row background instead of fighting it for the same pixels.
--- Used only by the git branch/worktree picker, which lists worktrees that
--- may not have an open tab (and therefore no assigned palette slot yet).
-M.HL = { fg = 'DeepSkyBlue', bold = true }
-
--- Per-worktree tab/statusline coloring: ANSI red, green, yellow, blue,
--- magenta, cyan, skipping 0/7 (black/gray) and the bright 8-15 variants.
--- Blue and cyan are safe to include because the active tab no longer fills
--- its background with the theme's accent color (see tabline.lua's
--- restyle_active_tab) — that fill was blue in tokyonight and made a blue or
--- cyan icon unreadable against it. Read from vim.g.terminal_color_N so the
--- palette follows whatever colorscheme is active (tested against
--- tokyonight) instead of being hardcoded to one theme's hex values.
-local ANSI_SLOTS = { 1, 2, 3, 4, 5, 6 }
-M.PALETTE_SIZE = #ANSI_SLOTS
-
-function M.color_for_slot(slot)
-  return vim.g['terminal_color_' .. ANSI_SLOTS[slot]] or '#ffffff'
+function M.base_dir(main_root)
+  return vim.fs.joinpath(main_root, unpack(SEGMENTS))
 end
 
-local assigned = {}
+--- Name -> path: where a worktree for `branch` lives.
+function M.path_for(main_root, branch)
+  return vim.fs.joinpath(M.base_dir(main_root), M.sanitize(branch))
+end
 
--- Lowest-unused-slot assignment: a worktree claims the smallest palette slot
--- no other currently-tracked worktree holds, and keeps it until reconciled
--- away (see M.reconcile_open). Unlike a monotonic counter, this lets slots
--- freed by closed worktrees be reused instead of cycling forever toward a
--- collision — two worktrees only ever share a color if more than
--- PALETTE_SIZE are tracked at once, which reconcile_open prevents as long as
--- tabline.render() calls it with the actual open set.
-function M.slot_for(name)
-  if assigned[name] then
-    return assigned[name]
+--- Path -> name: the worktree folder name for any path inside the layout,
+--- or nil when the path is outside it.
+function M.name_for_path(path)
+  return path:match("%.claude" .. SEP .. "worktrees" .. SEP .. "([^" .. BS .. "/]+)")
+end
+
+--- The folder name when it differs from the checked-out branch (else nil).
+--- The picker shows it as a "name:" prefix.
+function M.name_differs(path, branch)
+  local name = vim.fs.basename(path)
+  if name ~= branch then
+    return name
   end
-
-  local used = {}
-  for _, slot in pairs(assigned) do
-    used[slot] = true
-  end
-
-  local slot = 1
-  while used[slot] and slot < M.PALETTE_SIZE do
-    slot = slot + 1
-  end
-
-  assigned[name] = slot
-  return slot
+  return nil
 end
 
--- Drops tracked worktrees that are no longer open, freeing their slot for
--- reuse. `open_names` is a set (name -> true) of worktree names currently
--- backing a tab. Called from tabline.render(), which already enumerates
--- every open tab, so this stays in sync without a dedicated close event.
-function M.reconcile_open(open_names)
-  for name in pairs(assigned) do
-    if not open_names[name] then
-      assigned[name] = nil
-    end
-  end
+--- Normalized root of the checkout containing `dir` (the dir itself outside a repo).
+function M.key_for_dir(dir)
+  local root = vim.fs.root(dir, ".git") or dir
+  return (vim.fs.normalize(root):gsub("/+$", ""))
 end
 
--- Relative luminance of a "#rrggbb" hex color, used to pick legible
--- black/white statusline text against whichever palette color a worktree
--- was assigned (some ANSI slots, e.g. yellow, are too light for white text).
-local function luminance(hex)
-  local r = tonumber(hex:sub(2, 3), 16)
-  local g = tonumber(hex:sub(4, 5), 16)
-  local b = tonumber(hex:sub(6, 7), 16)
-  return (0.299 * r + 0.587 * g + 0.114 * b) / 255
+function M.branch_for_dir(dir)
+  return require("config.git.repo").branch_for_dir(dir)
 end
 
-function M.fg_for_bg(hex)
-  return luminance(hex) > 0.6 and 'black' or 'white'
+--- Human-readable name: branch, else layout folder name, else the dir.
+function M.label_for_dir(dir)
+  return M.branch_for_dir(dir) or M.name_for_path(dir) or dir
 end
 
 return M
