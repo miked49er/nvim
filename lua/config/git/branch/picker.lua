@@ -8,7 +8,8 @@ local actions = require("telescope.actions")
 local action_state = require("telescope.actions.state")
 local themes = require("telescope.themes")
 local menu_stack = require("config.ui.menu")
-local worktree = require("config.git.worktree.identity")
+local identity = require("config.git.worktree.identity")
+local palette = require("config.ui.palette")
 local repo = require("config.git.repo")
 local git_base_sync = require("config.git.branch.base_sync")
 local ops = require("config.git.branch.ops")
@@ -17,7 +18,7 @@ local remove_adapter = require("config.git.worktree.remove_adapter.telescope")
 
 local M = {}
 
-local WORKTREE_ICON = worktree.ICON
+local WORKTREE_ICON = palette.ICON
 local WORKTREE_HL = "GitBranchWorktree"
 
 -- A repo handle is opened per call for the current directory; nil outside a
@@ -126,16 +127,12 @@ local function worktree_priority_sorter(worktree_map)
   })
 end
 
-local function sanitize_worktree_name(branch)
-  return (branch:gsub("/", "+"))
-end
-
 local function worktree_path_for(branch)
   local root = repo_root()
   if not root then
     return nil
   end
-  return vim.fs.joinpath(root, ".claude", "worktrees", sanitize_worktree_name(branch))
+  return identity.path_for(root, branch)
 end
 
 local function open_worktree_tab(path)
@@ -444,7 +441,7 @@ local function list_orphan_worktree_folders()
   if not root then
     return {}
   end
-  local base = vim.fs.joinpath(root, ".claude", "worktrees")
+  local base = identity.base_dir(root)
   if vim.fn.isdirectory(base) == 0 then
     return {}
   end
@@ -774,8 +771,8 @@ local function open_picker(mode)
             local made = branch_entry_maker(entry)
             local wt_path = worktree_map[entry.name]
             if wt_path then
-              local wt_name = vim.fs.basename(wt_path)
-              if wt_name ~= entry.name then
+              local wt_name = identity.name_differs(wt_path, entry.name)
+              if wt_name then
                 made.display = wt_name .. ":" .. made.display
                 made.ordinal = wt_name .. " " .. made.ordinal
               end
@@ -847,7 +844,7 @@ handle_new = function(mode, name)
 end
 
 local function link_worktree_hl()
-  vim.api.nvim_set_hl(0, WORKTREE_HL, worktree.HL)
+  vim.api.nvim_set_hl(0, WORKTREE_HL, palette.HL)
 end
 
 local open_branch_submenu, open_worktree_submenu, open_stash_submenu, pick_mode
