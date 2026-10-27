@@ -9,7 +9,6 @@ local palette = require("config.ui.palette")
 local M = {}
 
 local WORKTREE_ICON = palette.ICON
-M.WORKTREE_HL = "GitBranchWorktree"
 
 local branch_entry = entries.branch
 
@@ -80,7 +79,7 @@ function M.screen(mode)
         local made = entries.describe(entry, worktree_map, mode)
         if made.worktree then
           made.icon = WORKTREE_ICON
-          made.hl = M.WORKTREE_HL
+          made.hl = ctx_mod.WORKTREE_HL
         end
         return made
       end,
