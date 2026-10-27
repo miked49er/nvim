@@ -135,7 +135,7 @@ local ICON = string.char(0xEF, 0x84, 0xA0)
 local function set_winbar(win, key)
   local name = display_name(key)
   local slot = palette.slot_for(identity.name_for_path(key) or name)
-  local hl = "PersistentTerminalWorktree" .. slot
+  local hl = palette.group_name("PersistentTerminal", slot)
   vim.api.nvim_set_hl(0, hl, { fg = palette.color_for_slot(slot), bold = true })
   vim.api.nvim_set_option_value("winbar", "%#" .. hl .. "#" .. ICON .. " " .. name:gsub("%%", "%%%%") .. "%*", { win = win })
 end
