@@ -85,4 +85,24 @@ function M.fg_for_bg(hex)
   return luminance(hex) > 0.6 and 'black' or 'white'
 end
 
+-- Highlight group name for a base prefix and palette slot, e.g.
+-- ("TabLine", 3) -> "TabLineWorktree3".
+function M.group_name(base, slot)
+  return base .. 'Worktree' .. slot
+end
+
+-- Defines one group per palette slot under `base`. `style(color, slot)`
+-- returns the nvim_set_hl attributes for that slot's color.
+function M.define_slot_groups(base, style)
+  for slot = 1, M.PALETTE_SIZE do
+    vim.api.nvim_set_hl(0, M.group_name(base, slot), style(M.color_for_slot(slot), slot))
+  end
+end
+
+-- Runs `define` now and again on every ColorScheme change.
+function M.define_now_and_on_colorscheme(desc, define)
+  define()
+  vim.api.nvim_create_autocmd('ColorScheme', { desc = desc, callback = define })
+end
+
 return M
