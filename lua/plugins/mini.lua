@@ -5,8 +5,7 @@ return {
     config = function()
       local statusline = require 'mini.statusline'
       local worktree = require 'config.git.worktree.identity'
-      local git_busy = require 'config.git.busy'
-      local branch_cache = require 'config.git.branch.cache'
+      local repo = require 'config.git.repo'
 
       -- Solid-background look, one group per palette slot so the statusline
       -- indicator matches whatever color the tabline assigned that
@@ -39,8 +38,8 @@ return {
       vim.api.nvim_set_hl(0, 'MiniStatuslineBranch', { fg = 'MediumSpringGreen', bold = true })
 
       local function branch_section()
-        local name = branch_cache.get(vim.fn.getcwd(0))
-        return name and (branch_cache.ICON .. ' ' .. name) or ''
+        local name = repo.cached_branch(vim.fn.getcwd(0))
+        return name and (repo.BRANCH_ICON .. ' ' .. name) or ''
       end
 
       -- Always relative to cwd (tab's repo/worktree root, via `tcd`) instead
@@ -53,7 +52,7 @@ return {
       end
 
       local function busy_section()
-        local label = git_busy.label()
+        local label = repo.busy.label()
         return label and ('⏳ ' .. label) or ''
       end
 

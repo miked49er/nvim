@@ -9,8 +9,7 @@ local action_state = require("telescope.actions.state")
 local themes = require("telescope.themes")
 local menu_stack = require("config.ui.menu")
 local worktree = require("config.git.worktree.identity")
-local git_busy = require("config.git.busy")
-local branch_cache = require("config.git.branch.cache")
+local repo = require("config.git.repo")
 local git_base_sync = require("config.git.branch.base_sync")
 local batch_remove = require("config.git.worktree.remove")
 
@@ -19,29 +18,30 @@ local M = {}
 local WORKTREE_ICON = worktree.ICON
 local WORKTREE_HL = "GitBranchWorktree"
 
--- Every call here might have moved HEAD (switch/checkout/rename/etc.), so the
--- statusline's cached branch name is invalidated unconditionally rather than
--- threading a "did this change HEAD" check through every call site.
-local function git(args)
-  local cmd = { "git" }
-  vim.list_extend(cmd, args)
-  local result = vim.system(cmd, { text = true, cwd = vim.fn.getcwd() }):wait()
-  branch_cache.invalidate()
-  return result
+-- A repo handle is opened per call for the current directory. Outside a
+-- repository the runners return a failed result, as git itself would.
+local function not_a_repo_result()
+  return { code = 128, stdout = "", stderr = "fatal: not a git repository" }
 end
 
--- Non-blocking counterpart to git(): on_done runs on the main loop (wrapped
--- in vim.schedule, since vim.system's own callback fires off-loop and isn't
--- safe for notify/buffer/window calls).
+local function open_repo()
+  return repo.open(vim.fn.getcwd())
+end
+
+local function git(args)
+  local h = open_repo()
+  return h and h:run(args) or not_a_repo_result()
+end
+
+-- Non-blocking counterpart to git(): on_done runs on the main loop.
 local function git_async(args, on_done)
-  local cmd = { "git" }
-  vim.list_extend(cmd, args)
-  vim.system(cmd, { text = true, cwd = vim.fn.getcwd() }, function(result)
-    vim.schedule(function()
-      branch_cache.invalidate()
-      on_done(result)
+  local h = open_repo()
+  if not h then
+    return vim.schedule(function()
+      on_done(not_a_repo_result())
     end)
-  end)
+  end
+  h:run_async(args, on_done)
 end
 
 local function is_locked_failure(result)
@@ -49,11 +49,8 @@ local function is_locked_failure(result)
 end
 
 local function git_lines(args)
-  local result = git(args)
-  if result.code ~= 0 then
-    return {}
-  end
-  return vim.split(result.stdout or "", "\n", { trimempty = true })
+  local h = open_repo()
+  return h and h:lines(args) or {}
 end
 
 local function notify_err(prefix, result)
@@ -61,62 +58,27 @@ local function notify_err(prefix, result)
 end
 
 local function current_head()
-  return git_lines({ "rev-parse", "--abbrev-ref", "HEAD" })[1] or "HEAD"
+  local h = open_repo()
+  return h and h:head() or "HEAD"
 end
 
--- Shared across all worktrees of this repo, unlike --show-toplevel which
--- returns whichever worktree's own root you happen to be sitting in.
+-- Shared across all worktrees of this repo, unlike the checkout root which
+-- is whichever worktree you happen to be sitting in.
 local function repo_root()
-  local common_dir = git_lines({ "rev-parse", "--path-format=absolute", "--git-common-dir" })[1]
-  if not common_dir then
-    return nil
-  end
-  return vim.fs.dirname(common_dir)
+  local h = open_repo()
+  return h and h.main_root or nil
 end
 
 local function list_branches()
-  local locals = git_lines({ "branch", "--format=%(refname:short)" })
-  local locals_set = {}
-  local entries = {}
-  for _, name in ipairs(locals) do
-    locals_set[name] = true
-    table.insert(entries, { name = name, is_local = true })
-  end
-
-  local remotes = git_lines({ "branch", "-r", "--format=%(refname:short)" })
-  for _, remote in ipairs(remotes) do
-    if not remote:match("/HEAD$") then
-      local short = remote:gsub("^[^/]+/", "")
-      if not locals_set[short] then
-        table.insert(entries, { name = short, is_local = false, remote = remote })
-      end
-    end
-  end
-  return entries
+  local h = open_repo()
+  return h and h:branches() or {}
 end
 
--- Ordered list of {path, branch, is_main}; the first block from
--- `git worktree list --porcelain` is always the main worktree.
+-- Ordered list of {path, branch, is_main}; the first entry is always the
+-- main worktree.
 local function list_worktrees_ordered()
-  local result = git({ "worktree", "list", "--porcelain" })
-  local list = {}
-  if result.code ~= 0 then
-    return list
-  end
-  local current
-  for _, line in ipairs(vim.split(result.stdout or "", "\n")) do
-    local wt_path = line:match("^worktree (.+)$")
-    local branch = line:match("^branch refs/heads/(.+)$")
-    if wt_path then
-      current = { path = wt_path, is_main = #list == 0 }
-      table.insert(list, current)
-    elseif branch and current then
-      current.branch = branch
-    elseif line == "" then
-      current = nil
-    end
-  end
-  return list
+  local h = open_repo()
+  return h and h:worktrees() or {}
 end
 
 local function list_worktrees()
@@ -531,8 +493,11 @@ local function changes_confirm_picker(wt, entries, opts, on_result)
               -- Async so scrolling the list never blocks on git.
               local bufnr = self.state.bufnr
               vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, { "(loading diff...)" })
-              vim.system({ "git", "-C", wt.path, "diff", "HEAD", "--", e.path }, { text = true }, function(r)
-                vim.schedule(function()
+              repo.open_async(wt.path, function(h)
+                if not h then
+                  return
+                end
+                h:run_async({ "diff", "HEAD", "--", e.path }, function(r)
                   if not vim.api.nvim_buf_is_valid(bufnr) then
                     return
                   end
@@ -574,9 +539,9 @@ end
 local function confirm_force_remove(wt, on_done)
   batch_remove.changes_summary_async(wt, function(entries)
     local function force_remove()
-      git_busy.start("removing worktree")
+      local busy = repo.busy.start("removing worktree")
       remove_worktree_async(wt, function(result)
-        git_busy.stop()
+        repo.busy.stop(busy)
         if result.code ~= 0 then
           notify_err("git worktree remove failed", result)
         end
@@ -615,9 +580,9 @@ local function remove_worktree_action()
       if #selected == 1 then
         local wt = selected[1]
         confirm_picker("Remove worktree at " .. wt.path .. "?", function()
-          git_busy.start("removing worktree")
+          local busy = repo.busy.start("removing worktree")
           remove_worktree_async(wt, function(result)
-            git_busy.stop()
+            repo.busy.stop(busy)
             if result.code == 0 then
               return
             end
@@ -638,16 +603,13 @@ local function remove_worktree_action()
       confirm_picker("Remove " .. #selected .. " worktrees: " .. table.concat(names, ", ") .. "?", function()
         -- Decisions first, removals second: nothing is removed until every
         -- dirty-worktree prompt is answered (see config.git.worktree.remove).
-        local busy = false
+        local busy
         batch_remove.run(selected, {
           review = function(wt, entries, cb)
             changes_confirm_picker(wt, entries, { allow_skip = true }, cb)
           end,
           remove = function(wt, force, on_done)
-            if not busy then
-              busy = true
-              git_busy.start("removing " .. #selected .. " worktrees")
-            end
+            busy = busy or repo.busy.start("removing " .. #selected .. " worktrees")
             remove_worktree_async(wt, on_done, force)
           end,
           on_failure = function(_, result)
@@ -655,7 +617,7 @@ local function remove_worktree_action()
           end,
           done = function()
             if busy then
-              git_busy.stop()
+              repo.busy.stop(busy)
             end
           end,
         })
@@ -701,8 +663,8 @@ end
 -- there's no git state to say the folder is safe to drop silently. In that
 -- fallback case the summary lists the folder's top-level files instead.
 local function orphan_dirty_summary_async(path, on_done)
-  git_async({ "-C", path, "status", "--porcelain" }, function(result)
-    if result.code ~= 0 then
+  repo.open_async(path, function(h)
+    if not h then
       local names = {}
       local ok, iter = pcall(vim.fs.dir, path)
       if ok then
@@ -715,12 +677,13 @@ local function orphan_dirty_summary_async(path, on_done)
       on_done(true, batch_remove.summarize_names(names))
       return
     end
-    local names = {}
-    for _, line in ipairs(vim.split(result.stdout or "", "\n", { trimempty = true })) do
-      local file_path = line:sub(4):gsub("^.* %-> ", ""):gsub('^"(.*)"$', "%1")
-      table.insert(names, vim.fs.basename(file_path))
-    end
-    on_done(#names > 0, batch_remove.summarize_names(names))
+    h:status_async(function(entries)
+      local names = {}
+      for _, e in ipairs(entries) do
+        table.insert(names, vim.fs.basename(e.path))
+      end
+      on_done(#names > 0, batch_remove.summarize_names(names))
+    end)
   end)
 end
 
@@ -873,17 +836,17 @@ local function delete_branch_action()
       if #selected == 1 then
         local entry = selected[1]
         confirm_picker("Delete branch " .. entry.name .. "?", function()
-          git_busy.start("deleting " .. entry.name)
+          local busy = repo.busy.start("deleting " .. entry.name)
           delete_branch_async(entry, function(result)
-            git_busy.stop()
+            repo.busy.stop(busy)
             if result.code == 0 then
               return
             end
             notify_err("git branch -d failed", result)
             confirm_picker(entry.name .. " is not fully merged. Force delete?", function()
-              git_busy.start("deleting " .. entry.name)
+              local force_busy = repo.busy.start("deleting " .. entry.name)
               git_async({ "branch", "-D", entry.name }, function(force_result)
-                git_busy.stop()
+                repo.busy.stop(force_busy)
                 if force_result.code ~= 0 then
                   notify_err("git branch -D failed", force_result)
                   return
@@ -904,7 +867,7 @@ local function delete_branch_action()
       confirm_picker("Delete " .. #selected .. " branches: " .. table.concat(names, ", ") .. "?", function()
         local failed = {}
         local remaining = #selected
-        git_busy.start("deleting " .. #selected .. " branches")
+        local busy = repo.busy.start("deleting " .. #selected .. " branches")
         for _, entry in ipairs(selected) do
           delete_branch_async(entry, function(result)
             if result.code ~= 0 then
@@ -912,7 +875,7 @@ local function delete_branch_action()
             end
             remaining = remaining - 1
             if remaining == 0 then
-              git_busy.stop()
+              repo.busy.stop(busy)
               if #failed > 0 then
                 vim.notify(
                   "Not fully merged, delete individually to force: " .. table.concat(failed, ", "),
@@ -992,18 +955,8 @@ local function pull_current()
 end
 
 local function list_stashes()
-  local result = git({ "stash", "list" })
-  if result.code ~= 0 then
-    return {}
-  end
-  local entries = {}
-  for _, line in ipairs(vim.split(result.stdout or "", "\n", { trimempty = true })) do
-    local ref = line:match("^(stash@{%d+})")
-    if ref then
-      table.insert(entries, { ref = ref, raw = line })
-    end
-  end
-  return entries
+  local h = open_repo()
+  return h and h:stashes() or {}
 end
 
 local function stash_entry_maker(entry)
@@ -1017,17 +970,8 @@ end
 -- git status --porcelain, tracked + untracked; for renames, keeps the new
 -- path since that's what a pathspec needs to match.
 local function list_changed_files()
-  local result = git({ "status", "--porcelain" })
-  if result.code ~= 0 then
-    return {}
-  end
-  local entries = {}
-  for _, line in ipairs(vim.split(result.stdout or "", "\n", { trimempty = true })) do
-    local status = line:sub(1, 2)
-    local path = line:sub(4):match("%-> (.+)$") or line:sub(4)
-    table.insert(entries, { status = status, path = path })
-  end
-  return entries
+  local h = open_repo()
+  return h and h:status() or {}
 end
 
 local function file_entry_maker(entry)
@@ -1223,9 +1167,9 @@ end
 -- Async-updates the base from its remote (busy guard shown meanwhile), warns
 -- if the branch may start behind the remote, then calls create(start_ref).
 local function create_from_fresh_base(base, create)
-  git_busy.start("updating " .. base)
+  local busy = repo.busy.start("updating " .. base)
   git_base_sync.prepare(base, function(start, warning)
-    git_busy.stop()
+    repo.busy.stop(busy)
     if warning then
       vim.notify(warning, vim.log.levels.WARN)
     end
