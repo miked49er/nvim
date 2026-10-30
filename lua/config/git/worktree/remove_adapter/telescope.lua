@@ -104,7 +104,7 @@ function M.confirm(wt, entries, opts, cb)
             resolve(remove.RESULT.FORCE)
           end)
           if opts.allow_skip then
-            map({ "i", "n" }, "<C-s>", function()
+            menu_adapter.bind(map, "skip", function()
               actions.close(prompt_bufnr)
               resolve(remove.RESULT.SKIP)
             end)

@@ -703,12 +703,6 @@ M.setup = function()
     desc = "Re-derive git branch/worktree picker highlight for the new colorscheme",
     callback = link_worktree_hl,
   })
-
-  vim.keymap.set("n", "<M-b>", M.open_menu, { desc = "Git branch/worktree menu" })
-  vim.keymap.set("n", "<leader>bb", M.switch_create_branch, { desc = "Switch/create git branch" })
-  vim.keymap.set("n", "<leader>bw", M.switch_create_worktree, { desc = "Switch/create git worktree" })
-  vim.keymap.set("n", "<leader>bp", M.pull, { desc = "Git pull" })
-  vim.keymap.set("n", "<leader>bP", M.push, { desc = "Git push" })
 end
 
 return M
