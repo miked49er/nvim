@@ -58,9 +58,10 @@ logged "node"; r=$?; check "node never installed" $((r==0))
 
 # 4. --with-extras installs optional toolchains
 setup; run --with-extras
-for p in go openjdk kotlin gradle groovy openscad docker; do
+for p in go openjdk kotlin gradle groovy openscad; do
   logged "install $p"; check "--with-extras installs $p" $?
 done
+logged "docker"; r=$?; check "--with-extras never installs docker" $((r==0))
 
 # 5. Failures are reported, run continues, exit 1
 setup; FAKE_BREW_FAIL=ripgrep run

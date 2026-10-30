@@ -36,7 +36,7 @@ Installed by `./deps.sh --with-extras`:
 
 - **[Go](https://golang.org/)** — for Go language server (commented out in config)
 - **[Java Development Kit](https://www.oracle.com/java/technologies/downloads/)** (openjdk) — for Java language server
-- **[Kotlin](https://kotlinlang.org/)**, **Gradle**, **Groovy**, **OpenSCAD**, **Docker**
+- **[Kotlin](https://kotlinlang.org/)**, **Gradle**, **Groovy**, **OpenSCAD**
 
 ## Language Servers
 
@@ -46,7 +46,7 @@ The following language servers are configured and will auto-install via [Mason](
 - awk_ls — AWK
 - bashls — Bash/Shell
 - cssls — CSS
-- docker_language_server — Dockerfile
+- docker_language_server — Dockerfile editing support
 - eslint — ESLint
 - gh_actions_ls — GitHub Actions
 - gradle_ls — Gradle
