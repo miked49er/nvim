@@ -14,20 +14,29 @@ A modular Neovim configuration with LSP support, treesitter syntax highlighting,
 
 ## External Dependencies
 
+On macOS, run `./deps.sh` to install everything below (idempotent; prints an installed/skipped/failed summary). Add `--with-extras` for the optional toolchains. Exit codes: 0 ok, 1 an install failed, 2 usage error or unsupported OS. Required packages live in `Brewfile`, extras in `Brewfile.extras`.
+
 ### Required
 
-- **[Neovim](https://neovim.io/)** (0.9+)
+- **[Neovim](https://neovim.io/)** (0.11+)
 - **[Git](https://git-scm.com/)** — required for plugin installation
-- **C compiler** — required for building plugins like treesitter (gcc/clang/MSVC)
+- **C compiler** and **make** — for building treesitter parsers and fzf-native (Xcode CLT on macOS)
+- **[ripgrep](https://github.com/BurntSushi/ripgrep)**
+- **[tree-sitter-cli](https://github.com/tree-sitter/tree-sitter)** — for building treesitter parsers
+- **curl**, **unzip**, **tar**, **gzip** — used by Mason
+- **[JetBrains Mono Nerd Font](https://www.nerdfonts.com/)**
 
 ### Optional
 
-- **[Node.js](https://nodejs.org/)** — for TypeScript/JavaScript language servers
+- **[Node.js](https://nodejs.org/)** — for TypeScript/JavaScript language servers (not installed by `deps.sh`; it warns if missing, use [nvm](https://github.com/nvm-sh/nvm))
 - **[Python](https://www.python.org/)** — for Python language server
 - **[Lua](https://www.lua.org/)** — for Lua language server
+
+Installed by `./deps.sh --with-extras`:
+
 - **[Go](https://golang.org/)** — for Go language server (commented out in config)
-- **[Java Development Kit](https://www.oracle.com/java/technologies/downloads/)** — for Java language server
-- **[Kotlin](https://kotlinlang.org/)** — for Kotlin language server
+- **[Java Development Kit](https://www.oracle.com/java/technologies/downloads/)** (openjdk) — for Java language server
+- **[Kotlin](https://kotlinlang.org/)**, **Gradle**, **Groovy**, **OpenSCAD**, **Docker**
 
 ## Language Servers
 
