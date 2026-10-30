@@ -40,6 +40,7 @@ function M.confirm(wt, entries, opts, cb)
       cb(pick == FORCE_ONE and remove.RESULT.FORCE or (pick and remove.RESULT.SKIP) or nil)
     end)
   end
+  local menu_adapter = require("config.ui.menu_adapter.telescope")
   local pickers = require("telescope.pickers")
   local finders = require("telescope.finders")
   local conf = require("telescope.config").values
@@ -108,12 +109,10 @@ function M.confirm(wt, entries, opts, cb)
               resolve(remove.RESULT.SKIP)
             end)
           end
-          for _, key in ipairs({ "<Esc>", "<C-c>" }) do
-            map({ "i", "n" }, key, function()
-              actions.close(prompt_bufnr)
-              resolve(nil)
-            end)
-          end
+          menu_adapter.bind(map, "cancel", function()
+            actions.close(prompt_bufnr)
+            resolve(nil)
+          end)
           return true
         end,
       })
