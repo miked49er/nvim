@@ -1,4 +1,4 @@
--- LSP actions bound by config.keymaps.lsp, plus the state/helpers they share
+-- LSP actions bound by config.keymaps.tables, plus the state/helpers they share
 -- with lua/plugins/lsp.lua (inlay-hint toggle, import folding).
 local M = {}
 

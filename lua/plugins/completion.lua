@@ -19,7 +19,7 @@ return {
       -- C-k: Toggle signature help (if signature.enabled = true)
       --
       -- See :h blink-cmp-config-keymap for defining your own keymap
-      keymap = require("config.keymaps.completion"),
+      keymap = require("config.keymaps.tables").completion,
 
       appearance = {
         nerd_font_variant = "mono",

@@ -70,7 +70,8 @@ check("warning names mode", warnings[2]:find("t", 1, true) ~= nil and warnings[2
 check("warnings also notified at WARN", #notified == 2 and notified[1][2] == vim.log.levels.WARN)
 
 -- The real tables are clean: every entry described, no duplicate lhs.
-local real = require("config.keymaps.tables")
+local tables = require("config.keymaps.tables")
+local real = tables.keymaps
 local seen, dup, nodesc = {}, 0, 0
 for _, e in ipairs(real) do
   if type(e[4]) ~= "string" or e[4] == "" then nodesc = nodesc + 1 end
@@ -84,11 +85,11 @@ check("real table: every entry has a description", nodesc == 0)
 check("real table: no duplicate lhs", dup == 0)
 
 -- Plugin-internal exported data keeps its shape.
-local completion = require("config.keymaps.completion")
+local completion = tables.completion
 check("completion preset kept", completion.preset == "default")
 check("completion <Tab> chain", vim.deep_equal(completion["<Tab>"], { "select_and_accept", "snippet_forward", "fallback" }))
 check("completion <S-Tab> chain", vim.deep_equal(completion["<S-Tab>"], { "snippet_backward", "fallback" }))
-local picker = require("config.keymaps.picker")
+local picker = tables.picker
 check("picker actions exported", picker.back and picker.toggle_select and picker.confirm and picker.cancel and picker.skip)
 
 if #failures > 0 then

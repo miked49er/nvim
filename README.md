@@ -72,9 +72,9 @@ The following language servers are configured and will auto-install via [Mason](
 
 ## Keybindings
 
-All mappings live in one table per area under `lua/config/keymaps/`
-(`editor`, `lsp`, `git`, `terminal`, `telescope`, ...), loaded by
-`keymaps/init.lua`. Read those files for the full list.
+All mappings live in one file, `lua/config/keymaps/tables.lua`, grouped into
+sections labeled by comments (Editor, Git, Telescope, Terminal, LSP) and loaded
+by `keymaps/init.lua`. Read that file for the full list.
 
 ## Configuration Structure
 
@@ -84,7 +84,7 @@ nvim/
 ├── lua/
 │   ├── config/
 │   │   ├── lazy.lua         # lazy.nvim bootstrap
-│   │   ├── keymaps/         # central keymap tables + loader
+│   │   ├── keymaps/         # central keymap file (tables.lua) + loader
 │   │   ├── git/             # repo, branch/ (ops, picker), worktree/ (identity, remove, tabs)
 │   │   ├── lsp/             # LSP actions (organize imports, folds, hints)
 │   │   ├── terminal/        # persistent per-worktree terminal
