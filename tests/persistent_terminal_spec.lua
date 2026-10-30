@@ -5,7 +5,8 @@
 -- docs/specs/0001-persistent-worktree-terminal.md's testing decisions.
 
 local repo_root = vim.fn.getcwd()
-package.path = repo_root .. "/lua/?.lua;" .. repo_root .. "/lua/?/init.lua;" .. package.path
+package.path = repo_root .. "/?.lua;" .. repo_root .. "/lua/?.lua;" .. repo_root .. "/lua/?/init.lua;" .. package.path
+local tmp = require("tests.support.tmp")
 
 local failures = {}
 local function check(name, ok, detail)
@@ -43,8 +44,7 @@ local test = persistent._test
 
 -- Isolate from this session's actual git branch: point the module at a
 -- fabricated, non-git cwd so worktree_key falls back to cwd itself.
-local fake_cwd = vim.fn.tempname()
-vim.fn.mkdir(fake_cwd, "p")
+local fake_cwd = tmp.dir()
 vim.cmd("tcd " .. vim.fn.fnameescape(fake_cwd))
 
 local key = test.worktree_key(vim.fn.getcwd(-1, 0))
@@ -130,7 +130,7 @@ local function write_head(root, head)
   f:close()
 end
 local function make_worktree(name, head)
-  local root = vim.fn.tempname() .. "-" .. name
+  local root = tmp.dir(name)
   vim.fn.mkdir(root .. "/.git", "p")
   write_head(root, head)
   return root
@@ -214,8 +214,8 @@ pcall(vim.fn.jobstop, job)
 print("")
 if #failures > 0 then
   print(#failures .. " failure(s): " .. table.concat(failures, ", "))
-  os.exit(1)
+  tmp.exit(1)
 else
   print("all checks passed")
-  os.exit(0)
+  tmp.exit(0)
 end
