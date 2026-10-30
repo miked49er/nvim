@@ -8,6 +8,7 @@
 --   { kind = "menu", title, items = { {label, run = fn(ctx) | open = decl}, ... } }
 --   { kind = "choose_one",  title, items, entry = fn(v) -> {display, ordinal, icon?, hl?},
 --     default_text?, prefer = fn(v) -> bool (ranks matches first),
+--     rank = fn(score, preferred) -> score (required with prefer; supplied by the caller),
 --     on_select = fn(v, ctx), on_input = fn(text, ctx) (typed text matching nothing) }
 --   { kind = "choose_many", title, items, entry?, hint?, preselect_all?,
 --     on_select = fn(values, ctx) }                 -- empty selection is ignored
@@ -80,6 +81,7 @@ function M.open(decl, opts)
         entries = entries_for(spec),
         default_text = spec.default_text,
         prefer = spec.prefer,
+        rank = spec.rank,
         accepts_input = spec.on_input ~= nil,
       }, function(out)
         if out == nil then
