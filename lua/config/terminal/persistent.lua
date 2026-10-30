@@ -4,7 +4,8 @@
 -- toggle leaves the job running, manually closing the window ends it, and
 -- closing the last tab of the worktree kills the job and its process tree. See docs/specs/0001-persistent-worktree-terminal.md.
 local shell = require("config.terminal.shell")
-local worktree = require("config.git.worktree.identity")
+local identity = require("config.git.worktree.identity")
+local palette = require("config.ui.palette")
 local repo = require("config.git.repo")
 local worktree_tabs = require("config.git.worktree.tabs")
 
@@ -27,14 +28,14 @@ end
 -- branch (or detached HEAD) stay separate. Outside a git repo the cwd
 -- itself is the key.
 local function worktree_key(cwd)
-  return normalize(vim.fs.root(cwd, ".git") or cwd)
+  return identity.key_for_dir(cwd)
 end
 
 -- Human-readable name for a key (winbar text and colour slot). branch_for_dir
 -- works for any git dir; label_for_cwd only recognizes this config's own
 -- worktree layout; the key itself is the last resort.
 local function display_name(key)
-  return repo.branch_for_dir(key) or worktree.label_for_cwd(key) or key
+  return identity.label_for_dir(key)
 end
 
 local function current_key()
@@ -137,9 +138,9 @@ local ICON = string.char(0xEF, 0x84, 0xA0)
 
 local function set_winbar(win, key)
   local name = display_name(key)
-  local slot = worktree.slot_for(worktree.label_for_cwd(key) or name)
+  local slot = palette.slot_for(identity.name_for_path(key) or name)
   local hl = "PersistentTerminalWorktree" .. slot
-  vim.api.nvim_set_hl(0, hl, { fg = worktree.color_for_slot(slot), bold = true })
+  vim.api.nvim_set_hl(0, hl, { fg = palette.color_for_slot(slot), bold = true })
   vim.api.nvim_set_option_value("winbar", "%#" .. hl .. "#" .. ICON .. " " .. name:gsub("%%", "%%%%") .. "%*", { win = win })
 end
 

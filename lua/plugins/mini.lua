@@ -4,7 +4,8 @@ return {
     enabled = true,
     config = function()
       local statusline = require 'mini.statusline'
-      local worktree = require 'config.git.worktree.identity'
+      local identity = require 'config.git.worktree.identity'
+      local palette = require 'config.ui.palette'
       local repo = require 'config.git.repo'
 
       -- Solid-background look, one group per palette slot so the statusline
@@ -16,9 +17,9 @@ return {
       end
 
       local function link_worktree_hl()
-        for slot = 1, worktree.PALETTE_SIZE do
-          local color = worktree.color_for_slot(slot)
-          vim.api.nvim_set_hl(0, worktree_hl_group(slot), { fg = worktree.fg_for_bg(color), bg = color, bold = true })
+        for slot = 1, palette.PALETTE_SIZE do
+          local color = palette.color_for_slot(slot)
+          vim.api.nvim_set_hl(0, worktree_hl_group(slot), { fg = palette.fg_for_bg(color), bg = color, bold = true })
         end
       end
       link_worktree_hl()
@@ -28,11 +29,11 @@ return {
       })
 
       local function worktree_section()
-        local name = worktree.label_for_cwd(vim.fn.getcwd(0))
+        local name = identity.name_for_path(vim.fn.getcwd(0))
         if not name then
           return '', 'MiniStatuslineDevinfo'
         end
-        return worktree.ICON .. ' ' .. name, worktree_hl_group(worktree.slot_for(name))
+        return palette.ICON .. ' ' .. name, worktree_hl_group(palette.slot_for(name))
       end
 
       vim.api.nvim_set_hl(0, 'MiniStatuslineBranch', { fg = 'MediumSpringGreen', bold = true })
