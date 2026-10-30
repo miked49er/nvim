@@ -5,7 +5,7 @@
 --          when the key is pressed, and the function is called with the fixed
 --          args only (never the keymap's own arguments).
 --   desc : required, non-empty
--- The tables live in config.keymaps.tables (split by area).
+-- The entries live in config.keymaps.tables (`keymaps`, grouped by comment headers).
 local M = {}
 
 local function modes_of(entry)
@@ -56,7 +56,7 @@ end
 
 --- Registers every central table.
 function M.setup()
-  return M.register(require("config.keymaps.tables"))
+  return M.register(require("config.keymaps.tables").keymaps)
 end
 
 return M

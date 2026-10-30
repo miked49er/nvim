@@ -1,4 +1,4 @@
--- File-finder pickers bound by config.keymaps.telescope.
+-- File-finder pickers bound by config.keymaps.tables.
 local M = {}
 
 local function builtin()

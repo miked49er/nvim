@@ -1,6 +1,6 @@
 -- Telescope adapter for config.ui.menu. Picker-internal keys are named actions
 -- (back, toggle_select, confirm, cancel, skip) applied here; M.keys is the table of
--- their bindings, defined in the central keymap table (config.keymaps.picker).
+-- their bindings, defined in the central keymap table (config.keymaps.tables, `picker`).
 local pickers = require("telescope.pickers")
 local finders = require("telescope.finders")
 local conf = require("telescope.config").values
@@ -12,10 +12,10 @@ local rank = require("config.git.branch.entries").rank
 
 local M = {}
 
--- name -> { modes, lhs }, defined in config.keymaps.picker. `confirm` is
+-- name -> { modes, lhs }, defined in config.keymaps.tables.picker. `confirm` is
 -- Telescope's select_default (<CR>); `cancel` is only used by dialogs that
 -- distinguish cancel from back.
-M.keys = require("config.keymaps.picker")
+M.keys = require("config.keymaps.tables").picker
 
 -- Binds the named action's key(s) on a picker's `map`. `confirm` is applied
 -- by replacing Telescope's select_default instead (callers do that directly).
