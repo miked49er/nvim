@@ -6,7 +6,7 @@ fails=0
 setup() {
   T="$(mktemp -d)"; BIN="$T/bin"; mkdir -p "$BIN"
   : >"$T/installed"; : >"$T/brew.log"
-  export T FAKE_UNAME="${FAKE_UNAME:-Darwin}" FAKE_BREW_FAIL=""
+  export T FAKE_UNAME="${FAKE_UNAME:-Darwin}" FAKE_BREW_FAIL="" FAKE_BREW_READS_STDIN=""
   cat >"$BIN/uname" <<'S'
 #!/bin/sh
 echo "$FAKE_UNAME"
@@ -17,7 +17,8 @@ S
 case "$1" in
   list) shift; while [ "${1#--}" != "$1" ]; do shift; done
         grep -qx "$1" "$T/installed" ;;
-  install) shift; while [ "${1#--}" != "$1" ]; do shift; done
+  install) [ -n "$FAKE_BREW_READS_STDIN" ] && cat >/dev/null
+        shift; while [ "${1#--}" != "$1" ]; do shift; done
         echo "install $1" >>"$T/brew.log"
         [ "$1" = "$FAKE_BREW_FAIL" ] && exit 1
         echo "$1" >>"$T/installed" ;;
@@ -66,6 +67,11 @@ setup; FAKE_BREW_FAIL=ripgrep run
 check "failure exits 1" $((RC==1 ? 0 : 1))
 has "failed: 1"; check "failure counted" $?
 logged "install tree-sitter-cli"; check "continues past failure" $?
+
+# 5b. A brew that reads stdin must not swallow the Brewfile being iterated
+setup; FAKE_BREW_READS_STDIN=1 run
+logged "install tree-sitter-cli"; check "brew reading stdin does not stop after first package" $?
+logged "install font-jetbrains-mono-nerd-font"; check "brew reading stdin: last package still installed" $?
 
 # 6. Non-Darwin unsupported
 setup; FAKE_UNAME=Linux run
