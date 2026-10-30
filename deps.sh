@@ -24,9 +24,9 @@ install_brewfile() {
     case "$kind" in brew|cask) ;; *) continue ;; esac
     name="${name//\"/}"
     flag="--formula"; [ "$kind" = cask ] && flag="--cask"
-    if brew list "$flag" "$name" >/dev/null 2>&1; then
+    if brew list "$flag" "$name" </dev/null >/dev/null 2>&1; then
       skipped+=("$name"); echo "skip    $name"
-    elif brew install "$flag" "$name"; then
+    elif brew install "$flag" "$name" </dev/null; then
       installed+=("$name"); echo "install $name"
     else
       failed+=("$name"); echo "FAILED  $name"
