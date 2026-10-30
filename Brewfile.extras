@@ -1,0 +1,8 @@
+# Optional toolchains, installed by `deps.sh --with-extras`.
+brew "go"
+brew "openjdk"
+brew "kotlin"
+brew "gradle"
+brew "groovy"
+brew "openscad"
+cask "docker-desktop"
