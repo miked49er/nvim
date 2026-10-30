@@ -17,10 +17,6 @@ local DEFAULT_FRAC = 0.3
 -- worktree path -> { buf, win, job, side, frac, toggling }
 local state = {}
 
-local function normalize(path)
-  return (vim.fs.normalize(path):gsub("/+$", ""))
-end
-
 -- The key identifies the worktree itself: its normalized root directory
 -- (nearest ancestor holding `.git`, a dir for the main checkout or a file
 -- for a linked worktree). It is independent of the checked-out branch, so
@@ -252,26 +248,6 @@ vim.api.nvim_create_autocmd("VimLeavePre", {
     end
   end,
 })
-
-vim.keymap.set({ "n", "t" }, "<M-\\>", function()
-  M.toggle()
-end, { desc = "Toggle persistent worktree terminal" })
-
-vim.keymap.set({ "n", "t" }, "<leader>\\h", function()
-  M.toggle("left")
-end, { desc = "Mount persistent worktree terminal left" })
-
-vim.keymap.set({ "n", "t" }, "<leader>\\j", function()
-  M.toggle("bottom")
-end, { desc = "Mount persistent worktree terminal bottom" })
-
-vim.keymap.set({ "n", "t" }, "<leader>\\k", function()
-  M.toggle("top")
-end, { desc = "Mount persistent worktree terminal top" })
-
-vim.keymap.set({ "n", "t" }, "<leader>\\l", function()
-  M.toggle("right")
-end, { desc = "Mount persistent worktree terminal right" })
 
 -- Test-only introspection; not part of the public API.
 M._test = {

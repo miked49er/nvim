@@ -45,7 +45,7 @@ LSP client has no such client extension, so it errors trying to run it.
   not consider `React` missing, so `organizeImports` strips it as unused and
   `addMissingImports` has nothing to re-add — it only restores imports *TS*
   considers missing, and TS and this project's ESLint config disagree here.
-  The `<M-o>` handler now snapshots the `import React from "react"` line (if
+  The `<M-o>` handler (`organize_imports` in `lua/config/lsp/actions.lua`) now snapshots the `import React from "react"` line (if
   present) before running `organizeImports`, and restores it verbatim if it
   got stripped, before the `addMissingImports` step runs. This is a
   deliberate special-case (not project-config-aware), scoped to this one
