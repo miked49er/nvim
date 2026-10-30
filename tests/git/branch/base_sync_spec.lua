@@ -1,10 +1,10 @@
--- Run with: nvim --headless -l tests/git_base_sync_spec.lua
+-- Run with: nvim --headless -l tests/git/branch/base_sync_spec.lua
 -- Real git repos in a temp dir (bare "origin" + clones); no mocks.
 
 local repo_root = vim.fn.getcwd()
 package.path = repo_root .. "/lua/?.lua;" .. repo_root .. "/lua/?/init.lua;" .. package.path
-package.loaded["config.branch_cache"] = { invalidate = function() end }
-local sync = require("config.git_base_sync")
+package.loaded["config.git.branch.cache"] = { invalidate = function() end }
+local sync = require("config.git.branch.base_sync")
 
 local failures = {}
 local function check(name, ok, detail)
