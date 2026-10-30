@@ -694,16 +694,15 @@ end
 M.push = push_current
 M.pull = pull_current
 
-local function link_worktree_hl()
+local function define_picker_worktree_highlight()
   vim.api.nvim_set_hl(0, WORKTREE_HL, palette.HL)
 end
 
 M.setup = function()
-  link_worktree_hl()
-  vim.api.nvim_create_autocmd("ColorScheme", {
-    desc = "Re-derive git branch/worktree picker highlight for the new colorscheme",
-    callback = link_worktree_hl,
-  })
+  palette.define_now_and_on_colorscheme(
+    "Re-derive git branch/worktree picker highlight for the new colorscheme",
+    define_picker_worktree_highlight
+  )
 end
 
 return M

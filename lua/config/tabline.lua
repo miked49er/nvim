@@ -48,7 +48,7 @@ local function tab_label(tabnr, hl)
   -- Colored by the worktree's assigned palette slot so different worktrees'
   -- tabs are visually distinguishable at a glance.
   local wt = identity.name_for_path(vim.fn.getcwd(-1, tabnr))
-  local prefix = wt and ("%#" .. hl .. "Worktree" .. palette.slot_for(wt) .. "#" .. palette.ICON .. " %#" .. hl .. "#") or ""
+  local prefix = wt and ("%#" .. palette.group_name(hl, palette.slot_for(wt)) .. "#" .. palette.ICON .. " %#" .. hl .. "#") or ""
 
   return " " .. prefix .. name .. modified .. " "
 end
@@ -93,29 +93,24 @@ end
 -- as a mismatched patch behind the icon. One group per (base, palette slot)
 -- pair, created upfront regardless of whether a slot is in use yet — cheap
 -- (12 groups).
-local function link_worktree_hl(base)
+local function define_tab_slot_groups(base)
   local base_hl = vim.api.nvim_get_hl(0, { name = base, link = false })
-  for slot = 1, palette.PALETTE_SIZE do
-    vim.api.nvim_set_hl(0, base .. "Worktree" .. slot, vim.tbl_extend("force", base_hl, {
-      fg = palette.color_for_slot(slot),
-      bold = true,
-    }))
-  end
+  palette.define_slot_groups(base, function(color)
+    return vim.tbl_extend("force", base_hl, { fg = color, bold = true })
+  end)
 end
 
-local function link_all()
+local function define_tabline_highlights()
   restyle_active_tab()
-  link_worktree_hl("TabLine")
-  link_worktree_hl("TabLineSel")
+  define_tab_slot_groups("TabLine")
+  define_tab_slot_groups("TabLineSel")
 end
 
 function M.setup()
-  link_all()
-
-  vim.api.nvim_create_autocmd("ColorScheme", {
-    desc = "Re-derive tabline worktree highlights for the new colorscheme",
-    callback = link_all,
-  })
+  palette.define_now_and_on_colorscheme(
+    "Re-derive tabline worktree highlights for the new colorscheme",
+    define_tabline_highlights
+  )
 
   vim.o.tabline = "%!v:lua.require('config.tabline').render()"
 end
