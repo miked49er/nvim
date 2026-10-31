@@ -1,8 +1,8 @@
--- Run with: nvim --headless -l tests/worktree_batch_remove_spec.lua
+-- Run with: nvim --headless -l tests/git/worktree/remove_spec.lua
 -- Real git repo + worktrees; only the prompt (vim.ui.select) is scripted.
 local repo_root = vim.fn.getcwd()
 package.path = repo_root .. "/lua/?.lua;" .. repo_root .. "/lua/?/init.lua;" .. package.path
-local batch = require("config.worktree_batch_remove")
+local batch = require("config.git.worktree.remove")
 
 local failures = {}
 local function check(name, ok, detail)

@@ -1,4 +1,4 @@
--- Run with: nvim --headless -l tests/worktree_tabs_spec.lua
+-- Run with: nvim --headless -l tests/git/worktree/tabs_spec.lua
 local repo_root = vim.fn.getcwd()
 package.path = repo_root .. "/lua/?.lua;" .. repo_root .. "/lua/?/init.lua;" .. package.path
 
@@ -8,7 +8,7 @@ local function check(name, ok)
   if not ok then table.insert(failures, name) end
 end
 
-local tabs = require("config.worktree_tabs")
+local tabs = require("config.git.worktree.tabs")
 local base = vim.fn.tempname()
 local function dir(n) local p = base .. "/" .. n; vim.fn.mkdir(p, "p"); return p end
 local a, b, c = dir("a"), dir("b"), dir("c")

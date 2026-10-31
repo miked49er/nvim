@@ -1,5 +1,5 @@
-local worktree = require("config.worktree")
-local branch_cache = require("config.branch_cache")
+local worktree = require("config.git.worktree.identity")
+local branch_cache = require("config.git.branch.cache")
 
 local M = {}
 
