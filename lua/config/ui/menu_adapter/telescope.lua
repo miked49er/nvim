@@ -9,6 +9,8 @@ local actions = require("telescope.actions")
 local action_state = require("telescope.actions.state")
 local themes = require("telescope.themes")
 
+local rank = require("config.git.branch.entries").rank
+
 local M = {}
 
 -- name -> { modes, lhs }. `confirm` is Telescope's select_default (<CR>);
@@ -55,13 +57,7 @@ local function priority_sorter(prefer)
     destroy = function() inner:_destroy() end,
     scoring_function = function(_, prompt, line, entry)
       local score = inner:scoring_function(prompt, line, entry)
-      if score == -1 then
-        return -1
-      end
-      if prefer(entry.value.value) then
-        return score
-      end
-      return score + 1e6
+      return rank(score, prefer(entry.value.value))
     end,
   })
 end
