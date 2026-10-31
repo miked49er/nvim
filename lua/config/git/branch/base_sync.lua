@@ -11,22 +11,19 @@
 -- tracking e.g. "upstream" is synced from there), else "origin".
 -- Remote-tracking bases ("origin/main") are fetched, then passed through.
 -- Other bases (tags, HEAD) pass through untouched.
-local branch_cache = require("config.git.branch.cache")
+local repo = require("config.git.repo")
 
 local M = {}
 
-local function git(args, on_done)
-  local cmd = { "git" }
-  vim.list_extend(cmd, args)
-  vim.system(cmd, { text = true, cwd = vim.fn.getcwd() }, function(result)
-    vim.schedule(function()
-      branch_cache.invalidate()
-      on_done(result)
-    end)
-  end)
-end
-
 function M.prepare(base, on_done)
+  local handle = repo.open(vim.fn.getcwd())
+  if not handle then
+    return on_done(base, nil)
+  end
+  local function git(args, cb)
+    handle:run_async(args, cb)
+  end
+
   local function stale_warning(why)
     return "Branch may be behind the remote (" .. why .. "); created from local '" .. base .. "'"
   end

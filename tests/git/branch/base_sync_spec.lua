@@ -4,7 +4,6 @@
 local repo_root = vim.fn.getcwd()
 package.path = repo_root .. "/?.lua;" .. repo_root .. "/lua/?.lua;" .. repo_root .. "/lua/?/init.lua;" .. package.path
 local tmp = require("tests.support.tmp")
-package.loaded["config.git.branch.cache"] = { invalidate = function() end }
 local sync = require("config.git.branch.base_sync")
 
 local failures = {}

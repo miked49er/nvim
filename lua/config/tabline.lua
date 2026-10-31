@@ -1,5 +1,5 @@
 local worktree = require("config.git.worktree.identity")
-local branch_cache = require("config.git.branch.cache")
+local repo = require("config.git.repo")
 
 local M = {}
 
@@ -8,7 +8,7 @@ local function get_empty_tab_name(cwd)
   if wt then
     return wt
   else
-    local branch = branch_cache.get(cwd)
+    local branch = repo.cached_branch(cwd)
     return branch or "[No Name]"
   end
 end

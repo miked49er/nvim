@@ -2,6 +2,8 @@
 -- worktree is checked for changes, every dirty-worktree decision is collected
 -- (force all / review one by one / skip), and only then does any removal run.
 -- Dismissing any prompt removes nothing.
+local repo = require("config.git.repo")
+
 local M = {}
 
 -- Values handed to a review callback (and used by the picker). nil = cancel.
@@ -28,40 +30,24 @@ function M.summarize_entries(entries)
   return M.summarize_names(names)
 end
 
--- Parse `git status --porcelain` output into { {status = "??", path = "dir/a.txt"}, ... }.
-function M.parse_porcelain(stdout)
-  local entries = {}
-  for _, line in ipairs(vim.split(stdout or "", "\n", { trimempty = true })) do
-    local path = line:sub(4):gsub("^.* %-> ", ""):gsub('^"(.*)"$', "%1")
-    table.insert(entries, { status = vim.trim(line:sub(1, 2)), path = path })
-  end
-  return entries
-end
-
 -- Async: on_done(entries) gets the full list of changes, each {status, path}
 -- (untracked files included, since they block a plain remove too). An empty
 -- list means the worktree is clean.
 function M.changes_summary_async(wt, on_done)
-  vim.system(
-    { "git", "-C", wt.path, "status", "--porcelain", "--untracked-files=all" },
-    { text = true },
-    function(result)
-      vim.schedule(function()
-        on_done(M.parse_porcelain(result.stdout))
-      end)
+  repo.open_async(wt.path, function(handle)
+    if not handle then
+      return on_done({})
     end
-  )
+    handle:status_async(on_done)
+  end)
 end
 
 -- Async: on_done(true) when the worktree is locked (`<git-dir>/locked`
 -- exists). A locked worktree is usually locked on purpose, so batch removal
 -- never offers to force it.
 function M.is_locked_async(wt, on_done)
-  vim.system({ "git", "-C", wt.path, "rev-parse", "--absolute-git-dir" }, { text = true }, function(result)
-    vim.schedule(function()
-      local gitdir = result.code == 0 and vim.trim(result.stdout or "") or nil
-      on_done(gitdir ~= nil and vim.uv.fs_stat(gitdir .. "/locked") ~= nil)
-    end)
+  repo.open_async(wt.path, function(handle)
+    on_done(handle ~= nil and handle:is_locked())
   end)
 end
 
