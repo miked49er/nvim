@@ -74,6 +74,7 @@ function M.open(decl, opts)
       end,
     }
     local kind = spec.kind
+    assert(not spec.prefer or spec.rank, "menu: `prefer` requires `rank` (title: " .. tostring(spec.title) .. ")")
 
     if kind == "menu" or kind == "choose_one" then
       adapter.choose_one({
