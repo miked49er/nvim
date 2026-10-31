@@ -26,7 +26,9 @@ end
 --- Path -> name: the worktree folder name for any path inside the layout,
 --- or nil when the path is outside it.
 function M.name_for_path(path)
-  return path:match("%.claude" .. SEP .. "worktrees" .. SEP .. "([^" .. BS .. "/]+)")
+  -- Anchored to a whole ".claude" segment; the first (outermost) match wins.
+  local p = path:gsub("^", "/", 1)
+  return p:match(SEP .. "%.claude" .. SEP .. "worktrees" .. SEP .. "([^" .. BS .. "/]+)")
 end
 
 --- The folder name when it differs from the checked-out branch (else nil).

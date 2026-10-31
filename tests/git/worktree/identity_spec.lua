@@ -15,6 +15,8 @@ check("plain name -> path", id.path_for("/r/main", "dev") == "/r/main/.claude/wo
 check("path -> name", id.name_for_path("/r/main/.claude/worktrees/feat+x") == "feat+x")
 check("path -> name windows", id.name_for_path((("C:/r/.claude/worktrees/dev/sub"):gsub("/", string.char(92)))) == "dev")
 check("path -> name nil outside layout", id.name_for_path("/r/main/src") == nil)
+check("nested layout path -> outermost worktree", id.name_for_path("/a/.claude/worktrees/foo/.claude/worktrees/bar") == "foo")
+check("layout segment inside a name is not matched", id.name_for_path("/a/x.claude/worktrees/foo") == nil)
 check("roundtrip", id.name_for_path(id.path_for("/r", "a/b")) == id.sanitize("a/b"))
 check("base dir", id.base_dir("/r/main") == "/r/main/.claude/worktrees")
 

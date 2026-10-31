@@ -19,23 +19,7 @@ vim.diagnostic.config({
   jump = { enabled = true },
 })
 
-vim.keymap.set("n", "]d", function()
-  vim.diagnostic.jump({ count = 1 })
-end, { desc = "Next diagnostic" })
-vim.keymap.set("n", "[d", function()
-  vim.diagnostic.jump({ count = -1 })
-end, { desc = "Previous diagnostic" })
-vim.keymap.set("n", "<leader>D", vim.diagnostic.open_float, { desc = "Show diagnostic message" })
-
-vim.keymap.set("n", "<space><space>x", "<cmd>source %<CR>")
-vim.keymap.set("n", "<leader>x", ":.lua<CR>")
-vim.keymap.set("v", "<leader>x", ":lua<CR>")
-
-vim.keymap.set("n", "<M-j>", "<cmd>cnext<CR>")
-vim.keymap.set("n", "<M-k>", "<cmd>cprev<CR>")
-
-vim.keymap.set("n", "-", "<cmd>Oil<CR>", { desc = "Oil File Explorer" })
-vim.keymap.set("n", "<leader>t", "<cmd>tabnew<CR>", { desc = "New tab" })
+require("config.keymaps").setup()
 
 vim.api.nvim_create_autocmd("TextYankPost", {
   desc = "Highlight when yanking (copying) text",
