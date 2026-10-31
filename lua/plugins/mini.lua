@@ -12,28 +12,19 @@ return {
       -- indicator matches whatever color the tabline assigned that
       -- worktree. Doesn't collide with MiniStatuslineModeOther (used for
       -- Terminal mode, linked to IncSearch).
-      local function worktree_hl_group(slot)
-        return 'MiniStatuslineWorktree' .. slot
+      local function define_statusline_slot_groups()
+        palette.define_slot_groups('MiniStatusline', function(color)
+          return { fg = palette.fg_for_bg(color), bg = color, bold = true }
+        end)
       end
-
-      local function link_worktree_hl()
-        for slot = 1, palette.PALETTE_SIZE do
-          local color = palette.color_for_slot(slot)
-          vim.api.nvim_set_hl(0, worktree_hl_group(slot), { fg = palette.fg_for_bg(color), bg = color, bold = true })
-        end
-      end
-      link_worktree_hl()
-      vim.api.nvim_create_autocmd('ColorScheme', {
-        desc = 'Re-derive statusline worktree highlights for the new colorscheme',
-        callback = link_worktree_hl,
-      })
+      palette.define_now_and_on_colorscheme('Re-derive statusline worktree highlights for the new colorscheme', define_statusline_slot_groups)
 
       local function worktree_section()
         local name = identity.name_for_path(vim.fn.getcwd(0))
         if not name then
           return '', 'MiniStatuslineDevinfo'
         end
-        return palette.ICON .. ' ' .. name, worktree_hl_group(palette.slot_for(name))
+        return palette.ICON .. ' ' .. name, palette.group_name('MiniStatusline', palette.slot_for(name))
       end
 
       vim.api.nvim_set_hl(0, 'MiniStatuslineBranch', { fg = 'MediumSpringGreen', bold = true })
