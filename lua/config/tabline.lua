@@ -1,10 +1,11 @@
-local worktree = require("config.git.worktree.identity")
+local identity = require("config.git.worktree.identity")
+local palette = require("config.ui.palette")
 local repo = require("config.git.repo")
 
 local M = {}
 
 local function get_empty_tab_name(cwd)
-  local wt = worktree.label_for_cwd(cwd)
+  local wt = identity.name_for_path(cwd)
   if wt then
     return wt
   else
@@ -43,11 +44,11 @@ local function tab_label(tabnr, hl)
 
   -- Icon only, no name/box: a full "(worktree-name)" chunk pushed long names
   -- into the rest of the tabline, so only the glyph is colored (fg-only,
-  -- same as worktree.HL) and the buffer name stays in the tab's own hl.
+  -- same as palette.HL) and the buffer name stays in the tab's own hl.
   -- Colored by the worktree's assigned palette slot so different worktrees'
   -- tabs are visually distinguishable at a glance.
-  local wt = worktree.label_for_cwd(vim.fn.getcwd(-1, tabnr))
-  local prefix = wt and ("%#" .. hl .. "Worktree" .. worktree.slot_for(wt) .. "#" .. worktree.ICON .. " %#" .. hl .. "#") or ""
+  local wt = identity.name_for_path(vim.fn.getcwd(-1, tabnr))
+  local prefix = wt and ("%#" .. hl .. "Worktree" .. palette.slot_for(wt) .. "#" .. palette.ICON .. " %#" .. hl .. "#") or ""
 
   return " " .. prefix .. name .. modified .. " "
 end
@@ -55,12 +56,12 @@ end
 function M.render()
   local open_worktrees = {}
   for tabnr = 1, vim.fn.tabpagenr("$") do
-    local wt = worktree.label_for_cwd(vim.fn.getcwd(-1, tabnr))
+    local wt = identity.name_for_path(vim.fn.getcwd(-1, tabnr))
     if wt then
       open_worktrees[wt] = true
     end
   end
-  worktree.reconcile_open(open_worktrees)
+  palette.reconcile_open(open_worktrees)
 
   local current = vim.fn.tabpagenr()
   local parts = {}
@@ -87,16 +88,16 @@ local function restyle_active_tab()
 end
 
 -- Per-slot groups inherit the base group's bg wholesale and override only
--- fg. worktree.color_for_slot() is fg-only — nvim_set_hl with no bg falls
+-- fg. palette.color_for_slot() is fg-only — nvim_set_hl with no bg falls
 -- back to Normal's background rather than the base group's, which showed up
 -- as a mismatched patch behind the icon. One group per (base, palette slot)
 -- pair, created upfront regardless of whether a slot is in use yet — cheap
 -- (12 groups).
 local function link_worktree_hl(base)
   local base_hl = vim.api.nvim_get_hl(0, { name = base, link = false })
-  for slot = 1, worktree.PALETTE_SIZE do
+  for slot = 1, palette.PALETTE_SIZE do
     vim.api.nvim_set_hl(0, base .. "Worktree" .. slot, vim.tbl_extend("force", base_hl, {
-      fg = worktree.color_for_slot(slot),
+      fg = palette.color_for_slot(slot),
       bold = true,
     }))
   end
