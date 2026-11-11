@@ -14,7 +14,6 @@ local open_repo, report, report_conflicts, NOT_A_REPO = ctx.open_repo, ctx.repor
 function M.open_worktree_tab(path)
   vim.cmd("tabnew")
   vim.cmd("tcd " .. vim.fn.fnameescape(path))
-  vim.notify("Worktree: " .. path)
 end
 
 function M.switch_branch(name)

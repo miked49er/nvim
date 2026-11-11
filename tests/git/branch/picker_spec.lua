@@ -136,8 +136,8 @@ print("worktree: create, then remove through the menu")
 do
   local main = scenario()
   drive({ "Worktree", "Switch/Create", { input = "wt1" }, { input = "" } })
-  vim.wait(10000, function() return noted("Worktree: ") end, 20)
   local path = main .. "/.claude/worktrees/wt1"
+  vim.wait(10000, function() return #vim.api.nvim_list_tabpages() > 1 end, 20)
   check("worktree exists", vim.uv.fs_stat(path) ~= nil)
   vim.cmd("tabclose")
   vim.fn.chdir(main)
